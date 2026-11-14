@@ -44,3 +44,27 @@ The service serializes mutations. `requestId` deduplication is scoped by actor a
 CLI exit 1 means error; JSON error is on stderr. HTTP errors: 400 invalid input, 403 invalid session/origin, 404 unknown entity/tool, 409 conflict, 428 missing expectedRevision. Connection failure means no server access, not that project data is empty.
 
 Audits: `audit.start` arguments `{projectId,mode:"agy"|"codex"|"both",instruction}`; returns a job. `audit.list` returns job history with running/ready/failed/cancelled/interrupted status. `audit.apply` requires projectId, runId and current expectedRevision. Review findings and check that the saved document is still current. Unlike ordinary tools, audit start/list return jobs directly rather than a revision/result envelope.
+
+Document branches: `documents.get` returns `sections` alongside aggregate Markdown. Each node has id/title/content/parentId/order. Every root branch is exported to its own Markdown file, with descendants in the same file. Use `documents.section.create` ({projectId,title,content,parentId}), `.update` ({projectId,sectionId,title,content}), `.move` ({projectId,sectionId,parentId,index}) or `.delete` ({projectId,sectionId}) with current expectedRevision. Prefer these tools over whole-document replacement to preserve stable IDs and branch file paths.
+
+## Section edit examples (server v1.2.0+)
+
+Read `documents.get` with `{projectId}` first. The result includes `sections`; find the intended section ID from that result rather than guessing it from its title or file path.
+
+Create a root branch using `documents.section.create`:
+
+```json
+{"arguments":{"projectId":"PROJECT_ID","parentId":null,"title":"Combat system","content":"Purpose and acceptance criteria."},"options":{"actor":"codex-game","expectedRevision":42,"requestId":"combat-design-root-v1"}}
+```
+
+Create a child with the returned root ID as parentId. For ordinary edits, `content` is the selected section's own body, not its descendants or title. Use child sections for structural headings; do not duplicate the section title as a Markdown heading in content.
+
+Rename/update using `documents.section.update`:
+
+```json
+{"arguments":{"projectId":"PROJECT_ID","sectionId":"SECTION_ID","title":"Combat rules","content":"Decisions, constraints and verifiable outcomes."},"options":{"actor":"codex-game","expectedRevision":43,"requestId":"combat-rules-edit-v1"}}
+```
+
+Both revisions above are examples: use the real current revision from the server. Read the document again after edits and check that unrelated sections and parent links remain intact. Deleting a section deletes all descendants; inspect the subtree first and only delete when within the requested scope. Moving a root under another section archives its former root file; its stable section ID survives.
+
+If live `tools` discovery lacks `documents.section.*`, the server is older than this skill. Update/restart the service from v1.2.0 or later before using section workflows; do not silently fall back to replacing the full document.

@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Use the Nhanh local tracker to read project design documents, plan nested tasks, claim work, record blockers and test evidence, and update progress while implementing a project. Use when the user asks to manage work through Nhanh or an existing project is linked to its local API.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Nhánh project tracking
@@ -28,7 +28,7 @@ This skill includes a dependency-free Node.js CLI: `scripts/nhanh.mjs`, resolved
 5. Read the current revision before guarded mutations. Use `tasks.complete` for a whole subtree, or `tasks.update` with `status: done` for a verified leaf. Do not mark work complete based on intent or a started job.
 6. Read `progress.get` to verify recorded progress. `activity.list` can identify changes from other agents or the human.
 
-To change the design document, use `documents.get/set` within the user's requested scope. To audit, use `audit.check` for local checks or `audit.start` for agy/Codex analysis, poll `audit.list`, and review the proposal before `audit.apply`. An audit does not itself implement project code. Read [calls.md](references/calls.md) for payloads and retry rules.
+When creating or revising a design document, read [document-standard.md](references/document-standard.md) for the common heading structure and writing rules. Read `documents.get` for the saved section IDs and revision; use `documents.section.create/update/move/delete` for normal edits. Every root section has a separate Markdown file with its descendants, while design.md is the aggregate. Reserve `documents.set` for an intentional full replacement/import because it reparses section IDs. For project/document/task audits, read [audit-rules.md](references/audit-rules.md) and perform the review in the current agent workflow. The UI does not run AI audits; a separate agent review through the existing API is optional. Read [calls.md](references/calls.md) for payloads and retry rules.
 
 ## Collaboration rules
 

@@ -7,5 +7,5 @@ This repository is a local API and human UI for shared project/task tracking.
 - Preserve existing `.local` user data. Do not commit private data, API keys, tokens or audit outputs.
 - Do not deploy to cloud hosting. Use `npm start` (API + built UI), or `npm run dev` for development.
 - Gemini/Google API keys may only be used for TTS. Use agy or explicitly authorized Codex CLI for non-TTS AI; never fall back to Gemini API.
-- No chat agent feature. Keep audit of projects, design documents and tasks.
+- No chat or AI audit controls in the UI. Audit project/document/task work in the agent workflow using `skills/nhanh-project-tracking/references/audit-rules.md`.
 - External agents should update through the documented API/CLI, not by editing storage files.

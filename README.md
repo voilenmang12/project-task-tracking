@@ -40,7 +40,7 @@ Nhóm tool:
 | Nhóm | Tool |
 |---|---|
 | Dự án | `projects.list`, `projects.get`, `projects.create`, `projects.update` |
-| Document | `documents.get`, `documents.set` |
+| Document | `documents.get`, `documents.set`, `documents.section.create/update/move/delete` |
 | Task | `tasks.list`, `tasks.create`, `tasks.update`, `tasks.move`, `tasks.complete`, `tasks.delete` |
 | Phối hợp | `tasks.claim`, `tasks.release`, `activity.list` |
 | Tiến độ | `progress.get` |
@@ -71,9 +71,9 @@ Nhóm tool:
 
 ## Document và audit
 
-Mỗi dự án có document riêng, nhập `.md`/`.txt`, sửa, preview và xuất từ **Design doc & Agents**. Agent ngoài đọc/sửa qua `documents.get/set`. Lưu document trước khi lập roadmap.
+Mỗi dự án có document riêng, nhập `.md`/`.txt`, sửa, preview và xuất từ **Design document**. Agent ngoài đọc/sửa qua `documents.get/set`. Lưu document trước khi lập roadmap.
 
-Tab **Audit project & task** giữ agy/Codex/both để rà soát document, phạm vi và task, đề xuất bổ sung roadmap/tag. `audit.check` kiểm tra local không gọi AI; `audit.start` chạy CLI thực, `audit.list` xem tiến độ/kết quả. Kết quả chỉ áp dụng khi bạn/agent gọi `audit.apply` hoặc bấm áp dụng. Chống áp dụng trùng và từ document đã thay đổi. CLI audit không triển khai code; agent bên ngoài thực hiện code trong repo riêng rồi cập nhật tiến độ qua API.
+Audit được thực hiện bởi agent đang làm việc trong repo, theo [quy tắc audit Markdown](skills/nhanh-project-tracking/references/audit-rules.md). UI chỉ giữ nhập/sửa/preview/xuất document, không còn chọn model, chạy audit hoặc áp dụng đề xuất AI. API `audit.check/start/list/cancel/apply` vẫn có cho workflow bên ngoài; review bằng agent thứ hai là tùy chọn.
 
 Dùng đăng nhập CLI có sẵn. Không sử dụng Gemini/Google API key cho tác vụ AI; môi trường tiến trình audit loại bỏ API key, Codex sandbox read-only, agy plan mode. Mỗi bước tối đa 5 phút; có hủy và lịch sử. Không tự chuyển sang Gemini API khi CLI lỗi.
 
@@ -108,7 +108,7 @@ node scripts/install-skill.mjs
 
 Mặc định dùng `$CODEX_HOME/skills` hoặc `~/.codex/skills`. Chỉ định thư mục skill khác bằng `--target <skills-directory>`. Installer không ghi đè skill đã có; xem và di chuyển bản cũ trước khi nâng cấp. Mở phiên agent mới để skill được phát hiện.
 
-Hoặc tải `nhanh-project-tracking-v1.1.0.zip` từ [GitHub Releases](https://github.com/voilenmang12/project-task-tracking/releases), kiểm tra hash bằng `SHA256SUMS.txt`, rồi giải nén thư mục `nhanh-project-tracking` vào thư mục skills. Không cần clone repo chỉ để sử dụng client; server Nhánh vẫn cần chạy trên cùng máy.
+Hoặc tải `nhanh-project-tracking-v1.2.0.zip` từ [GitHub Releases](https://github.com/voilenmang12/project-task-tracking/releases), kiểm tra hash bằng `SHA256SUMS.txt`, rồi giải nén thư mục `nhanh-project-tracking` vào thư mục skills. Không cần clone repo chỉ để sử dụng client; server Nhánh vẫn cần chạy trên cùng máy.
 
 Codex: gọi `$nhanh-project-tracking`, cung cấp projectId của dự án cần làm. Với agy, yêu cầu đọc file `SKILL.md` theo đường dẫn đã giải nén nếu môi trường không tự khám phá skill. Gói không tự sửa cấu hình của agy hoặc khởi động server. Trong hướng dẫn của mỗi repo, lưu projectId, URL localhost và actor để agent kết nối đúng dự án.
 
@@ -123,3 +123,7 @@ chạy test và cập nhật tiến độ có bằng chứng lên Nhánh.
 Gói gồm SKILL.md, metadata Codex, CLI Node.js không cần thư viện ngoài và tài liệu kết nối/call. Không chứa dữ liệu dự án, token, dependency hay file build. Người dùng còn có thể gọi CLI trực tiếp từ thư mục skill.
 
 Đóng gói lại: `python scripts/package-skill.py`; artifact được tạo trong `.local/releases/<version>/` và không đưa vào Git.
+
+Design document dùng [chuẩn viết chung](skills/nhanh-project-tracking/references/document-standard.md): mục lục cây theo heading Markdown, chọn mục để soạn thảo và preview song song ngay cạnh nhau. Có thêm mục con, thu/mở nhánh và xem toàn bộ tài liệu. Tài liệu mới có khung chuẩn; tài liệu cũ được giữ nguyên, có thể bổ sung mục chuẩn còn thiếu trước khi lưu.
+
+Mỗi nhánh lớn của document xuất thành một file Markdown riêng trong documents/, có index.json ánh xạ ID/tiêu đề/cấu trúc. UI cho thêm nhánh lớn, mục con, mục cùng cấp; sửa tiêu đề/nội dung; Tab/Shift+Tab đổi cấp; xóa nhánh có hoàn tác. design.md là bản tổng hợp. Agent sửa mục qua documents.section.create/update/move/delete để giữ ID ổn định.

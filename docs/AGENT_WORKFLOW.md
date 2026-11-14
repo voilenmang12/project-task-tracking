@@ -12,7 +12,7 @@ Use this tracker as the shared source of project scope and progress. Implement c
 ## Work loop
 
 1. `projects.get` reads document, tasks, tags, progress and revision.
-2. `audit.check` finds missing scope/criteria/blockers. Optionally use `audit.start` with agy/codex/both and poll `audit.list` until ready/failed/cancelled. Review the proposal before `audit.apply` with a current expectedRevision.
+2. Audit directly in the current agent workflow using [audit rules](../skills/nhanh-project-tracking/references/audit-rules.md). `audit.check` can find missing scope/criteria/blockers. Separate AI review through the audit API is optional; the web UI has no AI audit controls.
 3. Create phases and child tasks with `tasks.create` using parentId. Give each operation a stable requestId and explicit actor. Use tags from `tags.list`; create missing tags deliberately.
 4. `tasks.claim` before starting implementation. Claim uses options.actor; renew before expiresAt if work takes longer. If 409 says another owner, select another task or wait. Do not impersonate the owner.
 5. Implement and test in the target repository. Document acceptance criteria, dependencies and commit/test evidence in task notes. For blockers set status=blocked and blockedReason; release the lease if handing off.
@@ -43,3 +43,7 @@ Claim example: arguments={taskId,leaseMinutes:30}, options={actor}. Read example
 - Gemini/Google API keys are only allowed for TTS. For planning/audit use agy/Codex CLI sessions, never fall back to Gemini API.
 - API is loopback-only. Do not expose it on LAN/public internet. Any local process can obtain a session; actor is an attribution label, not a security boundary.
 - Preserve human edits. A lease coordinates agents but does not prevent humans from editing via UI.
+
+
+## Document section workflow
+Read documents.get for sections and revision. Follow [the shared document standard](../skills/nhanh-project-tracking/references/document-standard.md). Each root section becomes a separate Markdown file with its descendants; design.md is the aggregate. Use documents.section.create/update/move/delete with expectedRevision for ordinary edits. Set parentId=null for a new root; use an existing section ID for children. Preserve section IDs when renaming. Use documents.set only for deliberate full replacement/import because it reparses the tree. Never write generated .md files directly.

@@ -1,7 +1,7 @@
 import {uid,children} from './model.js';
 import {availableTags} from './tags.js';
 
-export function defaultDocument(project){return `# ${project.title}\n\n## Tầm nhìn\n${project.description||''}\n\n## Người dùng / người chơi mục tiêu\n\n## Vấn đề & giá trị cốt lõi\n\n## Phạm vi MVP\n\n## Ngoài phạm vi\n\n## Trải nghiệm & luồng chính\n\n## Hệ thống & ràng buộc kỹ thuật\n\n## Tiêu chí thành công\n\n## Các phase dự kiến\n\n## Câu hỏi chưa chốt\n`;}
+export {standardDocument as defaultDocument} from './document.js';
 export function validateProposal(value){
   if(!value||typeof value.summary!=='string'||!Array.isArray(value.phases)||!Array.isArray(value.tagAssignments))throw Error('Agent chưa trả về đúng định dạng roadmap.');
   let count=0;

@@ -1,3 +1,4 @@
+import {parseDocumentSections,renderDocument} from '../src/document.js';
 import {randomUUID} from 'node:crypto';
 import {children,descendants,moveTask,toggleBranch,progressMap,projectProgress} from '../src/model.js';
 import {availableTags,editTag,removeTag} from '../src/tags.js';
@@ -12,6 +13,10 @@ export const TOOL_DEFINITIONS=[
   spec('projects.update','Update project metadata',{projectId:str,title:str,description:str,color:str},['projectId']),
   spec('documents.get','Read design document',{projectId:str},['projectId'],true),
   spec('documents.set','Replace document; expectedRevision required to protect concurrent edits',{projectId:str,document:str},['projectId','document']),
+  spec('documents.section.create','Create document section; parentId null creates a separate root Markdown file',{projectId:str,title:str,content:str,parentId:{type:['string','null']}},['projectId','title']),
+  spec('documents.section.update','Edit section title/content; expectedRevision required',{projectId:str,sectionId:str,title:str,content:str},['projectId','sectionId']),
+  spec('documents.section.move','Move section subtree; expectedRevision required',{projectId:str,sectionId:str,parentId:{type:['string','null']},index:num},['projectId','sectionId','parentId']),
+  spec('documents.section.delete','Delete section subtree; expectedRevision required',{projectId:str,sectionId:str},['projectId','sectionId']),
   spec('tasks.list','List tasks; filter by project, parent, status or tag',{projectId:str,parentId:{type:['string','null']},status:str,tagId:str},['projectId'],true),
   spec('tasks.create','Create a task or child; optional client ID',{projectId:str,title:str,id:str,parentId:{type:['string','null']},notes:str,tagIds:strings},['projectId','title']),
   spec('tasks.update','Edit title, notes, tags, status (todo/in_progress/blocked/done), blockedReason; expectedRevision required',{taskId:str,title:str,notes:str,tagIds:strings,status:str,blockedReason:str},['taskId']),
@@ -57,7 +62,7 @@ export function createTools(store,agents){
       switch(name){
         case 'projects.list':result=d.projects.map(p=>({...p,designDocument:undefined,progress:progress(d,p.id)}));break;
         case 'projects.get':result={project:project(d,args.projectId),tasks:d.tasks.filter(t=>t.projectId===args.projectId).map(t=>({...t,status:state(t)})),tags:availableTags(d),progress:progress(d,args.projectId)};break;
-        case 'documents.get':result={document:project(d,args.projectId).designDocument||''};break;
+        case 'documents.get':result={document:project(d,args.projectId).designDocument||'',sections:project(d,args.projectId).documentSections??parseDocumentSections(project(d,args.projectId).designDocument||'')};break;
         case 'tasks.list':project(d,args.projectId);result=d.tasks.filter(t=>t.projectId===args.projectId&&(args.parentId===undefined||t.parentId===args.parentId)&&(!args.status||state(t)===args.status)&&(!args.tagId||(t.tagIds||[]).includes(args.tagId))).sort((a,b)=>a.order-b.order).map(t=>({...t,status:state(t)}));break;
         case 'progress.get':result=progress(d,args.projectId);break;
         case 'tags.list':result=availableTags(d);break;
@@ -66,7 +71,7 @@ export function createTools(store,agents){
       }return {revision,result};
     }
     const guarded=['documents.set','tasks.update','tasks.move','tasks.complete','tasks.delete','tags.update','tags.delete','projects.update','audit.apply'];
-    if(guarded.includes(name)&&options.expectedRevision===undefined)fail('expectedRevision required; read current state first',428);
+    if((guarded.includes(name)||name.startsWith('documents.section.'))&&options.expectedRevision===undefined)fail('expectedRevision required; read current state first',428);
     let result;
     const record=await store.transact(async(raw,previous)=>{
       let d=structuredClone(raw||empty());
@@ -77,9 +82,17 @@ export function createTools(store,agents){
       const now=new Date().toISOString();let projectId=args.projectId;
       let t=args.taskId?task(d,args.taskId):null;if(t){writable(t,actor);projectId=t.projectId;}
       switch(name){
+        case 'documents.section.create':case 'documents.section.update':case 'documents.section.move':case 'documents.section.delete':{
+          const p=project(d,args.projectId);let nodes=p.documentSections??parseDocumentSections(p.designDocument||'');const n=args.sectionId?nodes.find(n=>n.id===args.sectionId):null;if(args.sectionId&&!n)fail('Section not found',404);
+          if(name==='documents.section.create'){const parentId=args.parentId??null;if(parentId!==null&&!nodes.some(n=>n.id===parentId))fail('Parent section not found');const created={id:randomUUID(),title:text(args.title),content:args.content||'',parentId,order:nodes.filter(n=>n.parentId===parentId).length};nodes=[...nodes,created];result=created;}
+          if(name==='documents.section.update'){if(args.title!==undefined)n.title=text(args.title);if(args.content!==undefined)n.content=args.content;result=n;}
+          if(name==='documents.section.move'){if(args.parentId!==null&&(!nodes.some(n=>n.id===args.parentId)||args.parentId===n.id||descendants(nodes,n.id).has(args.parentId)))fail('Invalid parent/cycle');if(args.index!==undefined&&(!Number.isInteger(args.index)||args.index<0))fail('Invalid index');nodes=moveTask(nodes,n.id,args.parentId,args.index);result=nodes.find(x=>x.id===n.id);}
+          if(name==='documents.section.delete'){const ids=descendants(nodes,n.id);ids.add(n.id);nodes=nodes.filter(x=>!ids.has(x.id));result={deleted:[...ids]};}
+          p.documentSections=nodes;p.designDocument=renderDocument(p,nodes);break;
+        }
         case 'projects.create':{const p={id:args.id||randomUUID(),title:text(args.title),description:args.description||'',color:args.color||'#82768e',createdAt:now};p.designDocument=defaultDocument(p);d.projects.push(p);result=p;projectId=p.id;break;}
         case 'projects.update':{const p=project(d,args.projectId);for(const k of ['title','description','color'])if(args[k]!==undefined)p[k]=k==='title'?text(args[k]):args[k];result=p;break;}
-        case 'documents.set':{const p=project(d,args.projectId);p.designDocument=args.document;result={projectId:p.id,document:p.designDocument};break;}
+        case 'documents.set':{const p=project(d,args.projectId);p.designDocument=args.document;p.documentSections=parseDocumentSections(args.document);result={projectId:p.id,document:p.designDocument};break;}
         case 'tasks.create':{project(d,args.projectId);const parentId=args.parentId??null;if(parentId!==null&&task(d,parentId).projectId!==args.projectId)fail('Cross-project parent');const item={id:args.id||randomUUID(),projectId:args.projectId,title:text(args.title),notes:args.notes||'',tagIds:checkTags(d,args.tagIds||[]),parentId,done:false,status:'todo',order:children(d.tasks,parentId).filter(t=>t.projectId===args.projectId).length,attachments:[],createdAt:now};d.tasks.push(item);result=item;break;}
         case 'tasks.update':{for(const k of ['title','notes','blockedReason'])if(args[k]!==undefined)t[k]=k==='title'?text(args[k]):args[k];if(args.tagIds)t.tagIds=checkTags(d,args.tagIds);if(args.status){if(!['todo','in_progress','blocked','done'].includes(args.status))fail('Invalid status');if(args.status==='done'&&d.tasks.some(c=>c.parentId===t.id))fail('Use tasks.complete for a branch');t.status=args.status;t.done=args.status==='done';}t.updatedAt=now;result=t;break;}
         case 'tasks.move':{if(args.index!==undefined&&(!Number.isInteger(args.index)||args.index<0))fail('Invalid index');if(args.parentId!==null&&(task(d,args.parentId).projectId!==t.projectId||args.parentId===t.id||descendants(d.tasks,t.id).has(args.parentId)))fail('Invalid parent/cycle');d.tasks=moveTask(d.tasks,t.id,args.parentId,args.index);result=task(d,t.id);break;}

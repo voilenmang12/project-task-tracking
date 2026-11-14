@@ -9,7 +9,7 @@ name = 'nhanh-project-tracking'
 version = json.loads((repo / 'package.json').read_text(encoding='utf-8-sig'))['version']
 source = repo / 'skills' / name
 files = ['SKILL.md', 'agents/openai.yaml', 'scripts/nhanh.mjs',
-         'references/connection.md', 'references/calls.md']
+         'references/connection.md', 'references/calls.md', 'references/audit-rules.md', 'references/document-standard.md']
 actual = sorted(p.relative_to(source).as_posix() for p in source.rglob('*') if p.is_file())
 if actual != sorted(files):
     raise SystemExit('Unexpected skill files; review the packaging allowlist')

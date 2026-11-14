@@ -1,3 +1,4 @@
+import {validateDocumentSections} from './document.js';
 export const uid = () => crypto.randomUUID();
 export function children(tasks, parentId) { return tasks.filter(t => t.parentId === parentId).sort((a,b) => a.order-b.order); }
 export function descendants(tasks, id) {
@@ -36,6 +37,7 @@ export function indentTask(tasks,id,outdent=false){
   return previous?moveTask(tasks,id,previous.id):tasks;
 }
 export function validateData(data) {
+  for(const p of data?.projects||[])if(p.documentSections!==undefined)validateDocumentSections(p.documentSections);
   if(!data || data.version!==1 || !Array.isArray(data.projects) || !Array.isArray(data.tasks) || !Array.isArray(data.ideas))throw Error('Tệp sao lưu không đúng định dạng Nhánh.');
   if(data.customTags!==undefined&&(!Array.isArray(data.customTags)||data.customTags.some(t=>!t||typeof t.id!=='string'||typeof t.name!=='string'||!t.name.trim()||!/^#[0-9a-f]{6}$/i.test(t.color))))throw Error('Danh sách tag không hợp lệ.');
   if(data.tagCatalog!==undefined){
