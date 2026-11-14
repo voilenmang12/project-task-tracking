@@ -15,6 +15,8 @@ Mở địa chỉ Local được Vite in ra (mặc định http://localhost:5173
 
 ## Tính năng
 
+- Tag trực tiếp trên cây: chọn nhiều tag, bỏ tag, tìm và tạo tag riêng. Bộ mặc định gồm Idea, Design Document, Prototype, Core System, Architecture, Gameplay, UI/UX, Art/Assets, Audio, Tech Art/VFX, Research, Feature, Bug, Testing/QA, Optimization, Release, Analytics, Marketing. Lọc theo tag giữ lại các task cha để thấy ngữ cảnh. Tag đi theo task khi đổi cấp và nằm trong bản sao lưu JSON.
+
 - Tạo/sửa/xóa project; task có ghi chú, ảnh và nhánh con không đặt giới hạn độ sâu.
 - Checkbox hoàn thành toàn bộ nhánh. Tiến độ task là trung bình tiến độ các con trực tiếp; task lá tính 0% hoặc 100%. Tiến độ project là trung bình các task cấp lớn, mỗi task cấp lớn có trọng số bằng nhau.
 - Kéo tay nắm ⋮⋮ để đổi thứ tự. Thả vào giữa task để làm nhánh con, vào vạch trên/dưới để đặt cạnh task, hoặc vùng cuối danh sách để làm task cấp lớn. Trên mobile có thể dùng cửa sổ chi tiết → Vị trí trong dự án.
