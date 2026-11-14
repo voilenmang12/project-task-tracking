@@ -1,0 +1,51 @@
+/* Task-first explorer: navigation is a drawer, the tree owns the workspace. */
+.task-first{background:#fafbf9;color:#33413c}
+.task-first .sidebar{transform:translateX(-100%);visibility:hidden;width:252px;transition:transform .18s,visibility .18s}
+.task-first.menu-visible .sidebar{transform:translateX(0);visibility:visible}
+.task-first .main-shell{margin-left:0;width:100%}
+.task-first .sidebar-overlay{display:block;position:fixed;inset:0;background:#17271d40;z-index:19}
+.task-first .topbar{height:54px;padding:0 25px;background:#fff}
+.task-first .breadcrumb>.icon-button{display:flex}
+.task-first .breadcrumb{font-size:12px}
+.task-first .topbar-right{gap:12px}
+.task-first .small-avatar,.task-first .private-tag{display:none}
+.utility-button{font-size:12px;padding:7px 10px;border:1px solid #e1e6df;border-radius:5px}
+.task-first main{max-width:1600px;padding:22px 32px;margin:auto}
+.task-first .page-heading,.task-first .page-description,.task-first .outline-tag,.task-first .page-footer{display:none}
+.task-first .title-line{margin:0 0 12px}
+.task-first .title-line h1{font-size:22px;letter-spacing:-.5px}
+.tree-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.tree-project-progress{display:flex;align-items:center;gap:8px;color:#4c765a;font-size:12px}
+.tree-project-progress>span:last-child{color:#8a968e}
+.tree-tools{display:flex;align-items:center;gap:6px}
+.tree-tools>button{font-size:11px;padding:6px 9px;border:1px solid #e0e5df;background:#fff;border-radius:4px}
+.tree-tools>button:hover{background:#edf2eb}
+.task-first .project-overview{margin-bottom:15px;padding:15px 20px}
+.task-first .work-toolbar{margin-bottom:10px}
+.task-first .tabs button{padding:10px 0;font-size:12px}
+.task-first .search-box input{font-size:12px;width:170px}
+.task-first .composer{padding:6px 10px;margin-bottom:12px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;box-shadow:none}
+.task-first .composer-input{flex:1;min-width:200px}
+.task-first .composer-bottom{border:0;padding:0;margin:0}
+.task-first .composer-hint{display:none}
+.task-first .composer .attachments:not(:empty){order:3;flex-basis:100%;margin:0}
+.task-first .task-list{border:1px solid #e0e5df;background:#fff;border-radius:6px;padding:0 12px 12px;overflow-x:auto;min-height:45vh}
+.task-first .list-heading{padding:12px 115px 12px 16px;border-bottom:1px solid #e8ece6;font-size:10px;color:#829087;letter-spacing:.7px}
+.task-first .task-wrapper{margin-left:calc(var(--depth) * 22px);border-left:0!important;min-width:440px}
+.task-first .task-wrapper:before{content:'';position:absolute;left:-11px;top:-1px;height:23px;width:20px;border-left:1px solid #ccd6cc;border-bottom:1px solid #ccd6cc;pointer-events:none}
+.task-first .task-wrapper[style*='--depth: 0']:before{display:none}
+.task-first .task-row{min-height:43px;gap:8px;border-bottom:1px solid #f0f3ee;padding-right:5px}
+.task-first .task-row:hover{background:#f2f6ef}
+.task-first .task-title{font-size:13px;padding:9px 0;line-height:1.7}
+.task-first .tree-node-icon{color:#a68b57;display:flex;align-items:center;flex-shrink:0}
+.task-first .tree-node-icon:has(.lucide-file-text){color:#9aa79e}
+.task-first .checkbox{width:16px;height:16px;border-radius:3px}
+.task-first .expand-button{width:18px;color:#6d7d71}
+.task-first .row-progress{width:100px;font-variant-numeric:tabular-nums}
+.task-first .row-progress>span{font-size:11px}
+.task-first .row-actions{opacity:1;color:#9aa79c}
+.task-first .work-footer{margin-top:12px;font-size:10px}
+.task-first .toast{left:50%}
+.task-first .modal .composer{display:block}
+.task-first .modal .composer-bottom{margin-top:10px;display:flex}
+@media(max-width:600px){.task-first main{padding:16px 12px}.task-first .topbar{padding:0 12px}.task-first .title-line h1{font-size:20px}.tree-toolbar{gap:10px}.tree-tools{width:100%;justify-content:flex-start}.tree-tools>button{min-height:32px}.task-first .composer-input{min-width:100%;padding:3px}.task-first .composer-bottom{margin-left:auto}.task-first .task-wrapper{min-width:290px;margin-left:calc(var(--depth) * 18px)}.task-first .task-list{padding-inline:6px}.task-first .task-row{gap:5px;min-height:47px}.task-first .task-title{font-size:12px}.task-first .row-progress{width:32px;margin-left:0}.task-first .tiny-track{display:none}.task-first .row-actions .icon-button{width:27px}.task-first .list-heading{padding-right:35px}.task-first .work-footer{font-size:9px}.task-first .topbar-right{gap:4px}.task-first .breadcrumb>strong{max-width:160px}}
