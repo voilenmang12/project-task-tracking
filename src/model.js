@@ -38,6 +38,11 @@ export function indentTask(tasks,id,outdent=false){
 export function validateData(data) {
   if(!data || data.version!==1 || !Array.isArray(data.projects) || !Array.isArray(data.tasks) || !Array.isArray(data.ideas))throw Error('Tệp sao lưu không đúng định dạng Nhánh.');
   if(data.customTags!==undefined&&(!Array.isArray(data.customTags)||data.customTags.some(t=>!t||typeof t.id!=='string'||typeof t.name!=='string'||!t.name.trim()||!/^#[0-9a-f]{6}$/i.test(t.color))))throw Error('Danh sách tag không hợp lệ.');
+  if(data.tagCatalog!==undefined){
+    if(!Array.isArray(data.tagCatalog))throw Error('Danh sách tag không hợp lệ.');
+    const tagIds=new Set();
+    for(const tag of data.tagCatalog){if(!tag||typeof tag.id!=='string'||!tag.id||tagIds.has(tag.id)||typeof tag.name!=='string'||!tag.name.trim()||tag.name.length>60||typeof tag.color!=='string'||!/^#[0-9a-f]{6}$/i.test(tag.color))throw Error('Danh sách tag không hợp lệ.');tagIds.add(tag.id);}
+  }
   for(const t of data.tasks){if(t.tagIds!==undefined&&(!Array.isArray(t.tagIds)||t.tagIds.some(id=>typeof id!=='string')))throw Error('Tag của task không hợp lệ.');}
   const ids=new Set(); for(const item of [...data.projects,...data.tasks,...data.ideas]){if(typeof item.id!=='string'||ids.has(item.id)||typeof item.title!=='string')throw Error('Dữ liệu có ID hoặc tiêu đề không hợp lệ.');ids.add(item.id);}
   for(const p of data.projects){if(typeof p.description!=='string'||typeof p.color!=='string'||!/^#[0-9a-f]{6}$/i.test(p.color))throw Error('Thông tin dự án không hợp lệ.');}

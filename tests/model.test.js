@@ -1,6 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {indentTask,children} from '../src/model.js';
+import {availableTags,editTag,removeTag} from '../src/tags.js';
+test('editing preset tags updates catalog without changing task links; deletion survives backup',()=>{
+  const data=seedData();data.tasks[0].tagIds=['idea','prototype'];data.customTags=[{id:'combat',name:'Combat',color:'#617e96'}];
+  const edited=editTag(data,'idea',{name:'Concept',color:'#112233'});
+  assert.deepEqual(availableTags(edited).find(t=>t.id==='idea'),{id:'idea',name:'Concept',color:'#112233'});
+  assert.deepEqual(edited.tasks[0].tagIds,['idea','prototype']);
+  assert.throws(()=>editTag(edited,'idea',{name:'Prototype',color:'#112233'}));
+  const removed=validateData(JSON.parse(JSON.stringify(removeTag(edited,'idea'))));
+  assert.equal(availableTags(removed).some(t=>t.id==='idea'),false);
+  assert.equal(availableTags(removed).some(t=>t.id==='combat'),true);
+  assert.equal(removed.tasks.length,data.tasks.length);assert.deepEqual(removed.tasks[0].tagIds,['prototype']);
+  const empty={...removed,tagCatalog:[]};assert.deepEqual(availableTags(validateData(empty)),[]);
+});
 test('tag backups accept older data and preserve custom tags while moving tasks',()=>{const d=seedData();assert.doesNotThrow(()=>validateData(d));d.customTags=[{id:'combat',name:'Combat',color:'#617e96'}];d.tasks[2].tagIds=['prototype','combat'];assert.doesNotThrow(()=>validateData(JSON.parse(JSON.stringify(d))));assert.deepEqual(indentTask(d.tasks,'steps').find(t=>t.id==='steps').tagIds,['prototype','combat']);d.tasks[2].tagIds='invalid';assert.throws(()=>validateData(d));});
 test('keyboard indentation preserves subtree and outdents after parent',()=>{const {tasks}=seedData();const nested=indentTask(tasks,'inspiration');assert.equal(nested.find(t=>t.id==='inspiration').parentId,'plan');const restored=indentTask(nested,'inspiration',true);assert.deepEqual(children(restored,null).map(t=>t.id),['plan','inspiration','start']);assert.equal(indentTask(tasks,'plan'),tasks);assert.equal(indentTask(tasks,'plan',true),tasks);const subtree=indentTask(tasks,'plan',true);assert.equal(subtree.find(t=>t.id==='goal').parentId,'plan');});
 import {progressMap,projectProgress,moveTask,toggleBranch,seedData,validateData} from '../src/model.js';

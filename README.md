@@ -15,6 +15,8 @@ Mở địa chỉ Local được Vite in ra (mặc định http://localhost:5173
 
 ## Tính năng
 
+- Menu ☰ → Quản lý tag: đổi tên/màu bằng nút lưu, xóa tag khỏi danh sách và các task đang gắn. Áp dụng cả tag mặc định và tag riêng; task không bị xóa. Có thể hoàn tác trong phiên. Nhãn hiển thị sát tên task, xuống dòng khi thiếu chỗ.
+
 - Tag trực tiếp trên cây: chọn nhiều tag, bỏ tag, tìm và tạo tag riêng. Bộ mặc định gồm Idea, Design Document, Prototype, Core System, Architecture, Gameplay, UI/UX, Art/Assets, Audio, Tech Art/VFX, Research, Feature, Bug, Testing/QA, Optimization, Release, Analytics, Marketing. Lọc theo tag giữ lại các task cha để thấy ngữ cảnh. Tag đi theo task khi đổi cấp và nằm trong bản sao lưu JSON.
 
 - Tạo/sửa/xóa project; task có ghi chú, ảnh và nhánh con không đặt giới hạn độ sâu.

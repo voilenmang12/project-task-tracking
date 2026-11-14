@@ -1,12 +1,13 @@
 import React, {useState,useEffect,useRef} from 'react';
 import {createRoot} from 'react-dom/client';
 import {DndContext,DragOverlay,PointerSensor,KeyboardSensor,useSensor,useSensors,useDraggable,useDroppable,closestCenter,pointerWithin} from '@dnd-kit/core';
-import {Folder,FileText,Sprout,Plus,Search,Inbox,ChevronDown,ChevronRight,MoreHorizontal,GripVertical,ArrowUpRight,ArrowLeft,Check,ImagePlus,Mic,Square,X,Trash2,Download,Upload,FolderOpen,LayoutList,Lightbulb,Menu,Move,Undo2,CheckCheck,Paperclip,Command} from 'lucide-react';
+import {Tag,Folder,FileText,Sprout,Plus,Search,Inbox,ChevronDown,ChevronRight,MoreHorizontal,GripVertical,ArrowUpRight,ArrowLeft,Check,ImagePlus,Mic,Square,X,Trash2,Download,Upload,FolderOpen,LayoutList,Lightbulb,Menu,Move,Undo2,CheckCheck,Paperclip,Command} from 'lucide-react';
 import {uid,children,descendants,progressMap,projectProgress,indentTask,moveTask,toggleBranch,validateData,seedData} from './model';
 import {readData,writeData} from './storage';
 import './style.css';
 import TagPicker from './TagPicker';
-import {availableTags} from './tags';
+import {availableTags,editTag,removeTag} from './tags';
+import TagManager from './TagManager';
 
 const dateLabel=d=>new Date(d).toLocaleDateString('vi-VN',{day:'numeric',month:'short'});
 function IconButton({label,children,...props}){return <button type="button" className="icon-button" title={label} aria-label={label} {...props}>{children}</button>}
@@ -43,13 +44,13 @@ function TaskRow({task,depth,map,subtasks,collapsed,toggleCollapse,onToggle,onEd
       <button className="drag-handle" aria-label={`Kéo ${task.title}`} {...listeners} {...attributes}><GripVertical size={16}/></button>
       <button className={`expand-button ${hasChildren?'':'invisible'}`} aria-expanded={hasChildren?!collapsed:undefined} aria-label={collapsed?'Mở nhánh':'Thu gọn nhánh'} onClick={toggleCollapse}>{collapsed?<ChevronRight size={16}/>:<ChevronDown size={16}/>}</button>
       <button type="button" className="tree-node-icon" aria-label={`Thông tin task ${task.title}`} title="Mở thông tin task" onClick={onEdit}>{<FileText size={16}/>}</button><button className={`checkbox ${pct===100?'checked':pct>0?'partial':''}`} role="checkbox" aria-checked={pct===100?true:pct>0?'mixed':false} aria-label={`Hoàn thành ${task.title}`} onClick={()=>onToggle(pct!==100)}>{pct===100?<Check size={13}/>:pct>0?<span/>:null}</button>
-      {editing?<input ref={titleInput} className="inline-task-title" aria-label="Sửa tên task" value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{if(!skipBlur.current)onInline(draft,'save');}} onKeyDown={e=>{
+      <div className="task-label-group">{editing?<input ref={titleInput} className="inline-task-title" aria-label="Sửa tên task" value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{if(!skipBlur.current)onInline(draft,'save');}} onKeyDown={e=>{
         if(e.nativeEvent.isComposing||e.keyCode===229)return;
         if(e.key==='Escape'){e.preventDefault();e.stopPropagation();skipBlur.current=true;onInline(task.title,'cancel');}
         else if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!e.repeat){skipBlur.current=true;onInline(draft,'sibling');}}
         else if(e.key==='Tab'){e.preventDefault();e.stopPropagation();if(!e.repeat)onInline(draft,e.shiftKey?'outdent':'indent');}
       }}/>:<button title="Nhấn để sửa · Enter thêm task · Tab thụt nhánh" className={`task-title ${pct===100?'completed':''}`} onClick={onStartEditing}>{task.title}{task.attachments.length>0&&<span className="attachment-count"><Paperclip size={12}/>{task.attachments.length}</span>}{task.notes&&<span className="note-dot"/>}</button>}
-      <TagPicker task={task} tags={tags} onChange={onTagsChange} onCreate={onTagCreate}/>
+      <TagPicker task={task} tags={tags} onChange={onTagsChange} onCreate={onTagCreate}/></div>
       {hasChildren&&<span className="branch-count">{subtasks.filter(t=>map[t.id]===100).length}/{subtasks.length}</span>}
       <div className="row-progress"><div className="tiny-track"><i style={{width:`${pct}%`}}/></div><span>{pct}%</span></div>
       <div className="row-actions"><IconButton label="Thêm nhánh con" onClick={onAdd}><Plus size={16}/></IconButton><IconButton label="Di chuyển task" onClick={onMove}><Move size={15}/></IconButton><IconButton label="Chi tiết task" onClick={onEdit}><MoreHorizontal size={18}/></IconButton></div>
@@ -72,7 +73,7 @@ function TaskEditor({task,tasks,projects,onSave,onDelete,onClose,notify}){
   </form></Modal>
 }
 function App(){
-  const [data,setData]=useState(null),[active,setActive]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[tagFilter,setTagFilter]=useState(''),[collapsed,setCollapsed]=useState(new Set()),[edit,setEdit]=useState(null),[inlineId,setInlineId]=useState(null),[projectModal,setProjectModal]=useState(null),[childModal,setChildModal]=useState(null),[sidebar,setSidebar]=useState(false),[overview,setOverview]=useState(false),[toast,setToast]=useState(''),[history,setHistory]=useState([]),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(false),[dragging,setDragging]=useState(null),[loadError,setLoadError]=useState('');
+  const [data,setData]=useState(null),[active,setActive]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[tagFilter,setTagFilter]=useState(''),[collapsed,setCollapsed]=useState(new Set()),[edit,setEdit]=useState(null),[inlineId,setInlineId]=useState(null),[projectModal,setProjectModal]=useState(null),[childModal,setChildModal]=useState(null),[sidebar,setSidebar]=useState(false),[overview,setOverview]=useState(false),[manageTags,setManageTags]=useState(false),[toast,setToast]=useState(''),[history,setHistory]=useState([]),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(false),[dragging,setDragging]=useState(null),[loadError,setLoadError]=useState('');
   const currentData=useRef(data);currentData.current=data;
   const importRef=useRef(),toastTimer=useRef(),saveChain=useRef(Promise.resolve()),saveVersion=useRef(0);
   const notify=message=>{setToast(message);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(''),5000);};
@@ -86,7 +87,8 @@ function App(){
   const project=data.projects.find(p=>p.id===active),isIdeas=active==='ideas',tasks=data.tasks.filter(t=>t.projectId===active),map=progressMap(data.tasks),roots=children(tasks,null),pct=Math.round(projectProgress(data.tasks,active)),completed=roots.filter(t=>map[t.id]===100).length;
   function addTask(title,attachments=[],parentId=null){update({...data,tasks:[...data.tasks,{id:uid(),projectId:active,title,notes:'',attachments,parentId,order:children(tasks,parentId).length,done:false,createdAt:new Date().toISOString()}]});}
   function changeTags(id,tagIds){const latest=currentData.current;update({...latest,tasks:latest.tasks.map(t=>t.id===id?{...t,tagIds}:t)});}
-  function createTag(id,name){const latest=currentData.current;const existing=availableTags(latest).find(t=>t.name.toLowerCase()===name.toLowerCase());const tag=existing||{id:uid(),name:name.slice(0,60),color:'#617e96'};update({...latest,customTags:existing?(latest.customTags||[]):[...(latest.customTags||[]),tag],tasks:latest.tasks.map(t=>t.id===id?{...t,tagIds:[...new Set([...(t.tagIds||[]),tag.id])]}:t)});}
+  function createTag(id,name){const latest=currentData.current;const normalized=name.trim().slice(0,60);const catalog=availableTags(latest);const existing=catalog.find(t=>t.name.toLowerCase()===normalized.toLowerCase());const tag=existing||{id:uid(),name:normalized,color:'#617e96'};update({...latest,tagCatalog:existing?catalog:[...catalog,tag],tasks:latest.tasks.map(t=>t.id===id?{...t,tagIds:[...new Set([...(t.tagIds||[]),tag.id])]}:t)});}
+
   const tags=availableTags(data);
   function inlineAction(id,title,action){
     const latest=currentData.current;const task=latest.tasks.find(t=>t.id===id);if(!task)return;
@@ -121,7 +123,7 @@ function App(){
     {sidebar&&<div className="sidebar-overlay" onClick={()=>setSidebar(false)}/>}
     <aside className={`sidebar ${sidebar?'open':''}`}><a className="brand" href="#" onClick={e=>e.preventDefault()}><span className="brand-mark"><Sprout size={24}/></span>nhánh<span className="brand-dot">.</span></a><div className="workspace-label"><span className="avatar">M</span><div>Không gian cá nhân<small>Mỗi ngày, một bước nhỏ</small></div><ChevronDown size={14}/></div>
       <div className="nav-section">KHÔNG GIAN</div><button className={`nav-item ${isIdeas?'active':''}`} onClick={()=>select('ideas')}><Inbox size={18}/><span>Hộp ý tưởng</span><span className="count">{data.ideas.length}</span></button>
-      <div className="nav-section project-nav-label"><span>DỰ ÁN CỦA TÔI</span><IconButton label="Tạo dự án" onClick={()=>setProjectModal({})}><Plus size={16}/></IconButton></div>
+      <button className="nav-item" onClick={()=>{setSidebar(false);setManageTags(true);}}><Tag size={18}/><span>Quản lý tag</span><span className="count">{tags.length}</span></button><div className="nav-section project-nav-label"><span>DỰ ÁN CỦA TÔI</span><IconButton label="Tạo dự án" onClick={()=>setProjectModal({})}><Plus size={16}/></IconButton></div>
       <nav>{data.projects.map(p=><button className={`nav-item ${active===p.id?'active':''}`} key={p.id} onClick={()=>select(p.id)}><span className="project-dot" style={{background:p.color}}/><span className="nav-project-title">{p.title}</span><span className="project-percent">{Math.round(projectProgress(data.tasks,p.id))}%</span></button>)}</nav><button className="new-project" onClick={()=>setProjectModal({})}><Plus size={16}/>Dự án mới</button>
       <div className="sidebar-bottom"><div className="grow-note"><span>🌱</span><p>Việc lớn bắt đầu<br/>từ những nhánh nhỏ.</p></div><div className="backup-actions"><button onClick={exportData}><Download size={15}/>Xuất dữ liệu</button><button onClick={()=>importRef.current.click()}><Upload size={15}/>Nhập</button><input ref={importRef} hidden type="file" accept="application/json,.json" onChange={e=>{importData(e.target.files[0]);e.target.value='';}}/></div><p className={`local-status ${saveError?'danger-text':''}`}><i/>{saveError?'Chưa lưu · hãy xuất sao lưu':saving?'Đang lưu…':'Đã lưu trên thiết bị này'}</p></div>
     </aside>
@@ -138,6 +140,7 @@ function App(){
     {toast&&<div className="toast" role="status"><Check size={17}/><span>{toast}</span><IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={16}/></IconButton></div>}
     {edit&&data.tasks.find(t=>t.id===edit)&&<TaskEditor task={data.tasks.find(t=>t.id===edit)} tasks={data.tasks} projects={data.projects} notify={notify} onClose={()=>setEdit(null)} onDelete={deleteTask} onSave={(task,parentId)=>{const updated=data.tasks.map(t=>t.id===task.id?task:t);update({...data,tasks:parentId===task.parentId?updated:moveTask(updated,task.id,parentId)});}}/>}
     {childModal&&<Modal title={`Thêm nhánh cho “${childModal.title}”`} onClose={()=>setChildModal(null)}><Composer notify={notify} onSubmit={(title,a)=>{addTask(title,a,childModal.id);setCollapsed(s=>{const n=new Set(s);n.delete(childModal.id);return n;});setChildModal(null);}}/></Modal>}
+    {manageTags&&<Modal title="Quản lý tag" onClose={()=>setManageTags(false)}><TagManager tags={tags} tasks={data.tasks} onSave={(id,changes)=>update(editTag(currentData.current,id,changes))} onDelete={id=>{update(removeTag(currentData.current,id));if(tagFilter===id)setTagFilter('');}}/></Modal>}
     {projectModal&&<ProjectEditor project={projectModal} onClose={()=>setProjectModal(null)} onSave={p=>{const exists=data.projects.some(x=>x.id===p.id);update({...data,projects:exists?data.projects.map(x=>x.id===p.id?p:x):[...data.projects,p]});select(p.id);setProjectModal(null);}} onDelete={id=>{update({...data,projects:data.projects.filter(p=>p.id!==id),tasks:data.tasks.filter(t=>t.projectId!==id)});select(data.projects.find(p=>p.id!==id)?.id||'ideas');setProjectModal(null);notify('Đã xóa dự án. Có thể hoàn tác.');}}/>}
   </div>
 }
