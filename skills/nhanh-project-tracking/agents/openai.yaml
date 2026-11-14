@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nhánh Project Tracking"
+  short_description: "Manage local project tasks and agent progress"
+  default_prompt: "Use $nhanh-project-tracking to read this project's design document, work on the next task, and update verified progress."

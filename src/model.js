@@ -23,7 +23,7 @@ export function moveTask(tasks,id,parentId,index=Infinity) {
   const orders=new Map(siblings.map((t,i)=>[t.id,i]));
   return tasks.map(t=>t.id===id?{...t,parentId,order:orders.get(id)}:orders.has(t.id)?{...t,order:orders.get(t.id)}:t);
 }
-export function toggleBranch(tasks,id,done) {const ids=descendants(tasks,id);ids.add(id);return tasks.map(t=>ids.has(t.id)?{...t,done}:t);}
+export function toggleBranch(tasks,id,done) {const ids=descendants(tasks,id);ids.add(id);return tasks.map(t=>ids.has(t.id)?{...t,done,status:done?'done':'todo',claim:null}:t);}
 export function indentTask(tasks,id,outdent=false){
   const task=tasks.find(t=>t.id===id);if(!task)return tasks;
   if(outdent){
@@ -43,9 +43,9 @@ export function validateData(data) {
     const tagIds=new Set();
     for(const tag of data.tagCatalog){if(!tag||typeof tag.id!=='string'||!tag.id||tagIds.has(tag.id)||typeof tag.name!=='string'||!tag.name.trim()||tag.name.length>60||typeof tag.color!=='string'||!/^#[0-9a-f]{6}$/i.test(tag.color))throw Error('Danh sách tag không hợp lệ.');tagIds.add(tag.id);}
   }
-  for(const t of data.tasks){if(t.tagIds!==undefined&&(!Array.isArray(t.tagIds)||t.tagIds.some(id=>typeof id!=='string')))throw Error('Tag của task không hợp lệ.');}
+  for(const t of data.tasks){if(t.tagIds!==undefined&&(!Array.isArray(t.tagIds)||t.tagIds.some(id=>typeof id!=='string')))throw Error('Tag của task không hợp lệ.');if(t.status!==undefined&&!['todo','in_progress','blocked','done'].includes(t.status))throw Error('Trạng thái task không hợp lệ.');if(t.claim!=null&&(typeof t.claim.owner!=='string'||typeof t.claim.expiresAt!=='string'||Number.isNaN(Date.parse(t.claim.expiresAt))))throw Error('Claim không hợp lệ.');}
   const ids=new Set(); for(const item of [...data.projects,...data.tasks,...data.ideas]){if(typeof item.id!=='string'||ids.has(item.id)||typeof item.title!=='string')throw Error('Dữ liệu có ID hoặc tiêu đề không hợp lệ.');ids.add(item.id);}
-  for(const p of data.projects){if(typeof p.description!=='string'||typeof p.color!=='string'||!/^#[0-9a-f]{6}$/i.test(p.color))throw Error('Thông tin dự án không hợp lệ.');}
+  for(const p of data.projects){if(p.designDocument!==undefined&&(typeof p.designDocument!=='string'||p.designDocument.length>500000))throw Error('Design document không hợp lệ hoặc quá dài.');if(p.appliedRunIds!==undefined&&(!Array.isArray(p.appliedRunIds)||p.appliedRunIds.some(id=>typeof id!=='string')))throw Error('Lịch sử áp dụng không hợp lệ.');if(typeof p.description!=='string'||typeof p.color!=='string'||!/^#[0-9a-f]{6}$/i.test(p.color))throw Error('Thông tin dự án không hợp lệ.');}
   for(const i of data.ideas){if(typeof i.notes!=='string'||typeof i.createdAt!=='string'||Number.isNaN(Date.parse(i.createdAt)))throw Error('Ý tưởng không hợp lệ.');}
   const projects=new Set(data.projects.map(p=>p.id)), taskMap=new Map(data.tasks.map(t=>[t.id,t]));
   for(const item of [...data.tasks,...data.ideas]){if(!Array.isArray(item.attachments)||item.attachments.some(a=>!a||typeof a.id!=='string'||typeof a.url!=='string'||!/^data:(image\/(png|jpeg|gif|webp)|audio\/[\w.+-]+)(;[^,]*)?,/i.test(a.url)))throw Error('Tệp đính kèm không hợp lệ.');}

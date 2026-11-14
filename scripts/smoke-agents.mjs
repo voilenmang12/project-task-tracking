@@ -1,0 +1,10 @@
+import path from 'node:path';
+import {createStore} from '../server/store.js';
+import {createAgents} from '../server/agents.js';
+const store=createStore(path.resolve('.local/cli-smoke'));
+const previous=await store.read();
+await store.write({version:1,projects:[{id:'smoke',title:'CLI smoke test',description:'Local integration test',color:'#82768f',designDocument:'# Tiny puzzle game\nMVP: one level, move a block to the target. Single player desktop. No networking. Need one prototype phase and one task with acceptance criteria.'}],tasks:[],ideas:[]},previous.revision);
+const agents=createAgents(store);console.log(await agents.status());
+const run=await agents.start('smoke',process.argv[2]||'both','Integration test: return exactly one phase with one child task and no tagAssignments. Keep output short. Do not use tools, modify files, or access external services other than your normal model connection.');
+let last='';
+const timer=setInterval(async()=>{const current=(await agents.list('smoke')).find(r=>r.id===run.id);const state=current.status+':'+current.stage;if(state!==last){console.log(state);last=state;}if(current.status!=='running'){clearInterval(timer);console.log(JSON.stringify({status:current.status,error:current.error,completed:current.steps.map(s=>s.agent),phases:current.proposal?.phases.length}));process.exitCode=current.status==='ready'?0:1;}},2000);
