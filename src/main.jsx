@@ -35,7 +35,7 @@ function TaskRow({task,depth,map,subtasks,collapsed,toggleCollapse,onToggle,onEd
   useEffect(()=>{setDraft(task.title);},[task.title]);
   useEffect(()=>{if(editing){skipBlur.current=false;titleInput.current?.focus();titleInput.current?.select();}},[editing]);
   const hasChildren=subtasks.length>0,pct=Math.round(map[task.id]||0);
-  return <div className={`task-wrapper ${isDragging?'dragging':''}`} style={{'--depth':depth}}>
+  return <div className={`task-wrapper ${isDragging?'dragging':''}`} data-level={depth+1} style={{'--depth':depth,'--level-hue':(210+depth*137.508)%360}}>
     {dragging&&<DropZone id={`before-${task.id}`} data={{task,position:'before'}} className="drop-line"/>}
     <DropZone id={`inside-${task.id}`} data={{task,position:'inside'}} className="task-drop"><div ref={setNodeRef} className="task-row">
       <button className="drag-handle" aria-label={`Kéo ${task.title}`} {...listeners} {...attributes}><GripVertical size={16}/></button>
