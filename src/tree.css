@@ -1,4 +1,6 @@
 /* Task-first explorer: navigation is a drawer, the tree owns the workspace. */
+.inline-task-title{flex:1;min-width:40px;width:0;border:1px solid #8da881;border-radius:4px;background:#fff;padding:7px 5px;color:inherit;font:inherit;font-size:13px;outline-offset:0}
+.task-row:focus-within{background:#f1f6ee}
 .task-first{background:#fafbf9;color:#33413c}
 .task-first .sidebar{transform:translateX(-100%);visibility:hidden;width:252px;transition:transform .18s,visibility .18s}
 .task-first.menu-visible .sidebar{transform:translateX(0);visibility:visible}

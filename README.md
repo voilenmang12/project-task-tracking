@@ -37,3 +37,7 @@ vercel --prod
 ```
 
 Vercel nhận cấu hình từ `vercel.json`. Repository: https://github.com/voilenmang12/project-task-tracking
+
+## Thao tác nhanh trên cây
+
+Nhấn tên task để sửa trực tiếp. Enter lưu tên và tạo task cùng cấp ngay sau task hiện tại; Tab thụt vào task cùng cấp phía trước; Shift+Tab đưa ra sau task cha. Các nhánh con đi theo task. Click ra ngoài để lưu, Esc hủy phần tên đang sửa và thoát. Nút + thêm nhánh con ngay trên cây. Tab/Shift+Tab chỉ đổi cấp khi đang sửa tên; Esc để trở lại điều hướng bàn phím bình thường.

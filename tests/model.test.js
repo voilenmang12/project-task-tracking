@@ -1,5 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {indentTask,children} from '../src/model.js';
+test('keyboard indentation preserves subtree and outdents after parent',()=>{const {tasks}=seedData();const nested=indentTask(tasks,'inspiration');assert.equal(nested.find(t=>t.id==='inspiration').parentId,'plan');const restored=indentTask(nested,'inspiration',true);assert.deepEqual(children(restored,null).map(t=>t.id),['plan','inspiration','start']);assert.equal(indentTask(tasks,'plan'),tasks);assert.equal(indentTask(tasks,'plan',true),tasks);const subtree=indentTask(tasks,'plan',true);assert.equal(subtree.find(t=>t.id==='goal').parentId,'plan');});
 import {progressMap,projectProgress,moveTask,toggleBranch,seedData,validateData} from '../src/model.js';
 test('project gives equal weight to top-level tasks; branches average direct children',()=>{const data=seedData();const map=progressMap(data.tasks);assert.equal(map.plan,50);assert.equal(projectProgress(data.tasks,'welcome'),50/3);const done=toggleBranch(data.tasks,'plan',true);assert.equal(progressMap(done).plan,100);assert.equal(projectProgress(done,'welcome'),100/3);});
 test('reparenting rejects cycles and cross-project parents',()=>{const {tasks}=seedData();assert.equal(moveTask(tasks,'plan','goal'),tasks);assert.equal(moveTask(tasks,'plan','plan'),tasks);assert.equal(moveTask([...tasks,{id:'other',parentId:null,projectId:'other',order:0}],'plan','other').find(t=>t.id==='plan').parentId,null);});

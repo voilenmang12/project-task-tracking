@@ -24,6 +24,17 @@ export function moveTask(tasks,id,parentId,index=Infinity) {
   return tasks.map(t=>t.id===id?{...t,parentId,order:orders.get(id)}:orders.has(t.id)?{...t,order:orders.get(t.id)}:t);
 }
 export function toggleBranch(tasks,id,done) {const ids=descendants(tasks,id);ids.add(id);return tasks.map(t=>ids.has(t.id)?{...t,done}:t);}
+export function indentTask(tasks,id,outdent=false){
+  const task=tasks.find(t=>t.id===id);if(!task)return tasks;
+  if(outdent){
+    const parent=tasks.find(t=>t.id===task.parentId);if(!parent)return tasks;
+    const siblings=children(tasks,parent.parentId).filter(t=>t.projectId===task.projectId);
+    return moveTask(tasks,id,parent.parentId,siblings.findIndex(t=>t.id===parent.id)+1);
+  }
+  const siblings=children(tasks,task.parentId).filter(t=>t.projectId===task.projectId);
+  const previous=siblings[siblings.findIndex(t=>t.id===id)-1];
+  return previous?moveTask(tasks,id,previous.id):tasks;
+}
 export function validateData(data) {
   if(!data || data.version!==1 || !Array.isArray(data.projects) || !Array.isArray(data.tasks) || !Array.isArray(data.ideas))throw Error('Tệp sao lưu không đúng định dạng Nhánh.');
   const ids=new Set(); for(const item of [...data.projects,...data.tasks,...data.ideas]){if(typeof item.id!=='string'||ids.has(item.id)||typeof item.title!=='string')throw Error('Dữ liệu có ID hoặc tiêu đề không hợp lệ.');ids.add(item.id);}
