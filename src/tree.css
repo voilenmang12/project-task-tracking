@@ -41,6 +41,8 @@
 .task-first .task-title{font-size:13px;padding:9px 0;line-height:1.7}
 .task-first .tree-node-icon{color:#a68b57;display:flex;align-items:center;flex-shrink:0}
 .task-first .tree-node-icon:has(.lucide-file-text){color:#9aa79e}
+.task-first .tree-node-icon{width:24px;height:30px;padding:3px;border-radius:4px;justify-content:center;cursor:pointer}
+.task-first .tree-node-icon:hover{background:#e4ecdf;color:#52744a}
 .task-first .checkbox{width:16px;height:16px;border-radius:3px}
 .task-first .expand-button{width:18px;color:#6d7d71}
 .task-first .row-progress{width:100px;font-variant-numeric:tabular-nums}
