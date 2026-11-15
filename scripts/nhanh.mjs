@@ -1,3 +1,3 @@
 #!/usr/bin/env node
-// Keep one portable CLI implementation in the distributable skill.
+// The CLI lives in the skill folder so the skill works on its own; this is the same command from the repo.
 import '../skills/nhanh-project-tracking/scripts/nhanh.mjs';

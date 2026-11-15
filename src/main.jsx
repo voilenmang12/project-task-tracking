@@ -1,159 +1,313 @@
-import React, {useState,useEffect,useRef} from 'react';
-import {createRoot} from 'react-dom/client';
-import {DndContext,DragOverlay,PointerSensor,KeyboardSensor,useSensor,useSensors,useDraggable,useDroppable,closestCenter,pointerWithin} from '@dnd-kit/core';
-import {Tag,Folder,FileText,Sprout,Plus,Search,Inbox,ChevronDown,ChevronRight,MoreHorizontal,GripVertical,ArrowUpRight,ArrowLeft,Check,ImagePlus,Mic,Square,X,Trash2,Download,Upload,FolderOpen,LayoutList,Lightbulb,Menu,Move,Undo2,CheckCheck,Paperclip,Command} from 'lucide-react';
-import {uid,children,descendants,progressMap,projectProgress,indentTask,moveTask,toggleBranch,validateData,seedData} from './model';
-import {readData,writeData,pollData,acceptRemote} from './storage';
+// The web UI: a control room for one person running several agents.
+//   #/            Tổng quan: every project at a glance
+//   #/inbox       Cần bạn: questions to answer, blocked work, requests not picked up yet
+//   #/p/<id>      one project: plan tree, journal, notes; #/p/<id>/t/<taskId> opens an item
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import Markdown from 'react-markdown';
+import { Bell, ChevronDown, ChevronRight, LayoutGrid, Plus, Send } from 'lucide-react';
+import { call, subscribe } from './api.js';
+import { childrenOf } from '../shared/model.js';
+import TaskPanel, { Journal, QuestionBox } from './TaskPanel.jsx';
+import { Bar, Editable, STAGE_LABEL, STATUS_LABEL, StatusIcon, actorName, pct, timeAgo } from './ui.jsx';
 import './style.css';
-import TagPicker from './TagPicker';
-import {availableTags,editTag,removeTag} from './tags';
-import TagManager from './TagManager';
-import ProjectStudio from './ProjectStudio';
-import {defaultDocument} from './planning';
-import {PROJECT_TEMPLATES,templateTaskCount,instantiateTemplate} from './templates';
 
-const dateLabel=d=>new Date(d).toLocaleDateString('vi-VN',{day:'numeric',month:'short'});
-function IconButton({label,children,...props}){return <button type="button" className="icon-button" title={label} aria-label={label} {...props}>{children}</button>}
-function Attachments({items,onRemove}){return <div className="attachments">{items.map(a=><div className="attachment" key={a.id}>{a.url.startsWith('data:audio')?<audio controls src={a.url}/>:<a href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name||'Ảnh đính kèm'}/></a>}{onRemove&&<IconButton label="Bỏ tệp" onClick={()=>onRemove(a.id)}><X size={14}/></IconButton>}</div>)}</div>}
-async function fileAttachment(file){
-  if(!/^image\/(png|jpeg|gif|webp)$/.test(file.type)&&!file.type.startsWith('audio/'))throw Error('Hỗ trợ ảnh PNG, JPEG, GIF, WebP và bản thu âm.');
-  if(file.size>8*1024*1024)throw Error('Mỗi tệp tối đa 8 MB.');
-  return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve({id:uid(),name:file.name||'Bản thu âm',url:reader.result});reader.onerror=()=>reject(Error('Không đọc được tệp.'));reader.readAsDataURL(file);});
-}
-function Composer({onSubmit,idea=false,notify,compact=false}){
-  const [text,setText]=useState(''),[attachments,setAttachments]=useState([]),[recording,setRecording]=useState(false),[busy,setBusy]=useState(false);
-  const picker=useRef(),input=useRef(),recorder=useRef(),stream=useRef(),mounted=useRef(true),timer=useRef();
-  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;clearTimeout(timer.current);if(recorder.current?.state==='recording')recorder.current.stop();stream.current?.getTracks().forEach(t=>t.stop());};},[]);
-  async function addFiles(files){setBusy(true);try{const result=await Promise.all(Array.from(files).map(fileAttachment));if(mounted.current)setAttachments(a=>[...a,...result]);}catch(e){notify(e.message);}finally{if(mounted.current)setBusy(false);}}
-  async function record(){if(recording){recorder.current.stop();return;}if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){notify('Trình duyệt chưa hỗ trợ thu âm. Hãy mở bằng Chrome/Safari qua HTTPS hoặc localhost.');return;}
-    try{const media=await navigator.mediaDevices.getUserMedia({audio:true});if(!mounted.current){media.getTracks().forEach(t=>t.stop());return;}stream.current=media;const rec=new MediaRecorder(media);recorder.current=rec;const chunks=[];rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};rec.onstop=async()=>{clearTimeout(timer.current);media.getTracks().forEach(t=>t.stop());if(!mounted.current)return;setRecording(false);const blob=new Blob(chunks,{type:rec.mimeType||'audio/webm'});await addFiles([blob]);};rec.start();setRecording(true);timer.current=setTimeout(()=>{if(rec.state==='recording')rec.stop();},120000);}catch{notify('Không truy cập được microphone. Kiểm tra quyền thu âm của trình duyệt.');}}
-  function submit(e){e.preventDefault();if(recording||busy||(!text.trim()&&!attachments.length))return;onSubmit(text.trim()||(attachments.some(a=>a.url.startsWith('data:audio'))?'Ý tưởng từ bản thu âm':'Task từ hình ảnh'),attachments);setText('');setAttachments([]);input.current?.focus();}
-  return <form className={`composer ${compact?'compact':''}`} onSubmit={submit} onPaste={e=>{const files=Array.from(e.clipboardData.files).filter(f=>f.type.startsWith('image/'));if(files.length){e.preventDefault();addFiles(files);}}}>
-    <div className="composer-input"><Plus size={20}/><input ref={input} aria-label={idea?'Nội dung ý tưởng':'Tên task mới'} placeholder={idea?'Ý tưởng vừa lóe lên? Lưu lại ở đây…':'Thêm task mới, hoặc dán một hình ảnh…'} value={text} onChange={e=>setText(e.target.value)}/></div>
-    <Attachments items={attachments} onRemove={id=>setAttachments(a=>a.filter(x=>x.id!==id))}/>
-    <div className="composer-bottom"><span className="composer-hint">{recording?'Đang thu âm · tối đa 2 phút':busy?'Đang xử lý tệp…':<><Command size={12}/> Ctrl / ⌘ + V để dán ảnh</>}</span><div className="button-group"><input ref={picker} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={e=>{addFiles(e.target.files);e.target.value='';}}/><IconButton label="Đính kèm ảnh" onClick={()=>picker.current.click()}><ImagePlus size={18}/></IconButton><IconButton label={recording?'Dừng thu âm':'Thu âm ý tưởng'} onClick={record} className={`icon-button ${recording?'recording':''}`}>{recording?<Square size={17}/>:<Mic size={18}/>}</IconButton><button className="primary small" disabled={busy||recording||(!text.trim()&&!attachments.length)}>{idea?'Lưu ý tưởng':'Thêm task'}<ArrowUpRight size={15}/></button></div></div>
-  </form>
-}
-function DropZone({id,data,children:content,className=''}){const {setNodeRef,isOver}=useDroppable({id,data});return <div ref={setNodeRef} className={`${className} ${isOver?'drop-over':''}`}>{content}</div>}
-function TaskRow({task,depth,map,subtasks,collapsed,toggleCollapse,onToggle,onEdit,onAdd,onMove,dragging,editing,onStartEditing,onInline,tags,onTagsChange,onTagCreate}){
-  const {attributes,listeners,setNodeRef,isDragging}=useDraggable({id:task.id,data:{task}});
-  const [draft,setDraft]=useState(task.title);const titleInput=useRef(),skipBlur=useRef(false);
-  useEffect(()=>{setDraft(task.title);},[task.title]);
-  useEffect(()=>{if(editing){skipBlur.current=false;titleInput.current?.focus();titleInput.current?.select();}},[editing]);
-  const hasChildren=subtasks.length>0,pct=Math.round(map[task.id]||0);
-  return <div className={`task-wrapper ${isDragging?'dragging':''}`} data-level={depth+1} style={{'--depth':depth,'--level-hue':[0,35,270,45][depth%4],'--level-saturation':[0,18,16,12][depth%4]+'%'}}>
-    {dragging&&<DropZone id={`before-${task.id}`} data={{task,position:'before'}} className="drop-line"/>}
-    <DropZone id={`inside-${task.id}`} data={{task,position:'inside'}} className="task-drop"><div ref={setNodeRef} className="task-row">
-      <button className="drag-handle" aria-label={`Kéo ${task.title}`} {...listeners} {...attributes}><GripVertical size={16}/></button>
-      <button className={`expand-button ${hasChildren?'':'invisible'}`} aria-expanded={hasChildren?!collapsed:undefined} aria-label={collapsed?'Mở nhánh':'Thu gọn nhánh'} onClick={toggleCollapse}>{collapsed?<ChevronRight size={16}/>:<ChevronDown size={16}/>}</button>
-      <button type="button" className="tree-node-icon" aria-label={`Thông tin task ${task.title}`} title="Mở thông tin task" onClick={onEdit}>{<FileText size={16}/>}</button><button className={`checkbox ${pct===100?'checked':pct>0?'partial':''}`} role="checkbox" aria-checked={pct===100?true:pct>0?'mixed':false} aria-label={`Hoàn thành ${task.title}`} onClick={()=>onToggle(pct!==100)}>{pct===100?<Check size={13}/>:pct>0?<span/>:null}</button>
-      <div className="task-label-group">{editing?<input ref={titleInput} className="inline-task-title" aria-label="Sửa tên task" value={draft} onChange={e=>setDraft(e.target.value)} onBlur={()=>{if(!skipBlur.current)onInline(draft,'save');}} onKeyDown={e=>{
-        if(e.nativeEvent.isComposing||e.keyCode===229)return;
-        if(e.key==='Escape'){e.preventDefault();e.stopPropagation();skipBlur.current=true;onInline(task.title,'cancel');}
-        else if(e.key==='Enter'){e.preventDefault();e.stopPropagation();if(!e.repeat){skipBlur.current=true;onInline(draft,'sibling');}}
-        else if(e.key==='Tab'){e.preventDefault();e.stopPropagation();if(!e.repeat)onInline(draft,e.shiftKey?'outdent':'indent');}
-      }}/>:<button title="Nhấn để sửa · Enter thêm task · Tab thụt nhánh" className={`task-title ${pct===100?'completed':''}`} onClick={onStartEditing}>{task.title}{task.attachments.length>0&&<span className="attachment-count"><Paperclip size={12}/>{task.attachments.length}</span>}{task.notes&&<span className="note-dot"/>}</button>}
-      <span className="agent-task-state">{!task.done&&task.status==='blocked'?'Bị chặn':!task.done&&task.status==='in_progress'?'Đang làm':''}{task.claim&&Date.parse(task.claim.expiresAt)>Date.now()?` · ${task.claim.owner}`:''}</span><TagPicker task={task} tags={tags} onChange={onTagsChange} onCreate={onTagCreate}/></div>
-      {hasChildren&&<span className="branch-count">{subtasks.filter(t=>map[t.id]===100).length}/{subtasks.length}</span>}
-      <div className="row-progress"><div className="tiny-track"><i style={{width:`${pct}%`}}/></div><span>{pct}%</span></div>
-      <div className="row-actions"><IconButton label="Thêm nhánh con" onClick={onAdd}><Plus size={16}/></IconButton><IconButton label="Di chuyển task" onClick={onMove}><Move size={15}/></IconButton><IconButton label="Chi tiết task" onClick={onEdit}><MoreHorizontal size={18}/></IconButton></div>
-    </div></DropZone>
-    {dragging&&<DropZone id={`after-${task.id}`} data={{task,position:'after'}} className="drop-line"/>}
-  </div>
-}
-function Modal({title,onClose,children}){const dialog=useRef();useEffect(()=>{const el=dialog.current;el.showModal();return()=>el.close();},[]);return <dialog ref={dialog} className="modal" onCancel={onClose} onClick={e=>{if(e.target===e.currentTarget)onClose();}}><div className="modal-heading"><h2>{title}</h2><IconButton label="Đóng" onClick={onClose}><X size={20}/></IconButton></div>{children}</dialog>}
-function TaskEditor({task,tasks,projects,onSave,onDelete,onClose,notify}){
-  const [title,setTitle]=useState(task.title),[notes,setNotes]=useState(task.notes),[attachments,setAttachments]=useState(task.attachments),[parentId,setParentId]=useState(task.parentId||''),[busy,setBusy]=useState(false),[confirmDelete,setConfirmDelete]=useState(false);const picker=useRef();
-  const excluded=descendants(tasks,task.id);excluded.add(task.id);
-  async function add(files){setBusy(true);try{const result=await Promise.all(Array.from(files).map(fileAttachment));setAttachments(a=>[...a,...result]);}catch(e){notify(e.message);}finally{setBusy(false);}}
-  return <Modal title="Chi tiết task" onClose={onClose}><form onSubmit={e=>{e.preventDefault();if(title.trim()&&!busy){onSave({...task,title:title.trim(),notes,attachments},parentId||null);onClose();}}} onPaste={e=>{if(e.clipboardData.files.length){e.preventDefault();add(e.clipboardData.files);}}}>
-    <label>Tên task<input autoFocus required value={title} onChange={e=>setTitle(e.target.value)}/></label>
-    <label>Ghi chú<textarea rows={5} placeholder="Thêm mô tả, đường dẫn hay điều cần nhớ…" value={notes} onChange={e=>setNotes(e.target.value)}/></label>
-    <label>Vị trí trong dự án<select value={parentId} onChange={e=>setParentId(e.target.value)}><option value="">Task cấp lớn</option>{tasks.filter(t=>t.projectId===task.projectId&&!excluded.has(t.id)).map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
-    <div className="field-heading"><span>Đính kèm · dán ảnh ngay trong cửa sổ này</span><input ref={picker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" onChange={e=>add(e.target.files)}/><IconButton label="Thêm ảnh" onClick={()=>picker.current.click()}><ImagePlus size={18}/></IconButton></div><Attachments items={attachments} onRemove={id=>setAttachments(a=>a.filter(x=>x.id!==id))}/>
-    {confirmDelete&&<p className="danger-text">Xóa task này và {excluded.size-1} nhánh con? Có thể hoàn tác ngay sau khi xóa.</p>}
-    <div className="modal-footer"><button type="button" className="text-button danger" onClick={()=>{if(confirmDelete){onDelete(task.id);onClose();}else setConfirmDelete(true);}}><Trash2 size={16}/>{confirmDelete?'Xác nhận xóa':'Xóa task'}</button><button className="primary" disabled={busy||!title.trim()}>Lưu thay đổi<Check size={16}/></button></div>
-  </form></Modal>
-}
-function App(){
-  const [data,setData]=useState(null),[active,setActive]=useState(''),[query,setQuery]=useState(''),[filter,setFilter]=useState('all'),[tagFilter,setTagFilter]=useState(''),[collapsed,setCollapsed]=useState(new Set()),[edit,setEdit]=useState(null),[inlineId,setInlineId]=useState(null),[projectModal,setProjectModal]=useState(null),[childModal,setChildModal]=useState(null),[sidebar,setSidebar]=useState(false),[overview,setOverview]=useState(false),[manageTags,setManageTags]=useState(false),[studio,setStudio]=useState(false),[toast,setToast]=useState(''),[history,setHistory]=useState([]),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(false),[dragging,setDragging]=useState(null),[loadError,setLoadError]=useState('');
-  const currentData=useRef(data);currentData.current=data;const remoteData=useRef(null);
-  const importRef=useRef(),toastTimer=useRef(),saveChain=useRef(Promise.resolve()),saveVersion=useRef(0);
-  const notify=message=>{setToast(message);clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(''),5000);};
-  useEffect(()=>{readData().then(d=>{const initial=d?validateData(d):seedData();setData(initial);setActive(initial.projects[0]?.id||'ideas');}).catch(e=>setLoadError(e.message||'Không mở được dữ liệu local. Kiểm tra server.'));return()=>clearTimeout(toastTimer.current);},[]);
-  useEffect(()=>{if(!data||remoteData.current===data)return;const version=++saveVersion.current;setSaving(true);saveChain.current=saveChain.current.catch(()=>{}).then(()=>writeData(data)).then(()=>{if(version===saveVersion.current){setSaving(false);setSaveError(false);}}).catch(()=>{setSaving(false);setSaveError(true);notify('Lưu thất bại. Hãy xuất bản sao lưu trước khi tải lại để tránh mất thay đổi.');});},[data]);
-  useEffect(()=>{if(!data||saving||saveError||edit||inlineId||projectModal||childModal||manageTags||studio)return;let alive=true;
-    const timer=setInterval(async()=>{const snapshot=currentData.current;try{const record=await pollData();if(alive&&currentData.current===snapshot&&record.data&&JSON.stringify(record.data)!==JSON.stringify(snapshot)){acceptRemote(record);remoteData.current=record.data;currentData.current=record.data;setData(record.data);setHistory([]);if(active!=='ideas'&&!record.data.projects.some(p=>p.id===active))setActive(record.data.projects[0]?.id||'ideas');}}catch{}},2000);
-    return()=>{alive=false;clearInterval(timer);};
-  },[data,saving,saveError,edit,inlineId,projectModal,childModal,manageTags,studio,active]);
-  const sensors=useSensors(useSensor(PointerSensor,{activationConstraint:{distance:6}}),useSensor(KeyboardSensor));
-  if(loadError)return <div className="loading"><Sprout size={36}/><p>{loadError}</p><button className="primary" onClick={()=>location.reload()}>Tải lại</button></div>;
-  if(!data)return <div className="loading"><Sprout size={36}/><p>Đang mở không gian của bạn…</p></div>;
-  function update(next){const previous=currentData.current;currentData.current=next;setHistory(h=>[...h.slice(-19),previous]);setData(next);}
-  function undo(){if(!history.length)return;setData(history[history.length-1]);setHistory(h=>h.slice(0,-1));notify('Đã hoàn tác thay đổi.');}
-  const project=data.projects.find(p=>p.id===active),isIdeas=active==='ideas',tasks=data.tasks.filter(t=>t.projectId===active),map=progressMap(data.tasks),roots=children(tasks,null),pct=Math.round(projectProgress(data.tasks,active)),completed=roots.filter(t=>map[t.id]===100).length;
-  function addTask(title,attachments=[],parentId=null){update({...data,tasks:[...data.tasks,{id:uid(),projectId:active,title,notes:'',attachments,parentId,order:children(tasks,parentId).length,done:false,createdAt:new Date().toISOString()}]});}
-  function changeTags(id,tagIds){const latest=currentData.current;update({...latest,tasks:latest.tasks.map(t=>t.id===id?{...t,tagIds}:t)});}
-  function createTag(id,name){const latest=currentData.current;const normalized=name.trim().slice(0,60);const catalog=availableTags(latest);const existing=catalog.find(t=>t.name.toLowerCase()===normalized.toLowerCase());const tag=existing||{id:uid(),name:normalized,color:'#617e96'};update({...latest,tagCatalog:existing?catalog:[...catalog,tag],tasks:latest.tasks.map(t=>t.id===id?{...t,tagIds:[...new Set([...(t.tagIds||[]),tag.id])]}:t)});}
+const parseRoute = () => {
+  const parts = window.location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+  if (parts[0] === 'inbox') return { view: 'inbox' };
+  if (parts[0] === 'p' && parts[1]) return { view: 'project', projectId: parts[1], taskId: parts[2] === 't' ? parts[3] : null };
+  return { view: 'home' };
+};
+const go = (path) => { window.location.hash = path; };
+const projectPath = (id, taskId) => `/p/${encodeURIComponent(id)}${taskId ? `/t/${encodeURIComponent(taskId)}` : ''}`;
 
-  const tags=availableTags(data);
-  function inlineAction(id,title,action){
-    const latest=currentData.current;const task=latest.tasks.find(t=>t.id===id);if(!task)return;
-    if(action==='cancel'){setInlineId(null);return;}
-    let next=latest.tasks;const name=title?.trim()||task.title;
-    if(name!==task.title)next=next.map(t=>t.id===id?{...t,title:name}:t);
-    if(action==='sibling'||action==='child'){
-      const parentId=action==='child'?id:task.parentId;
-      const siblings=children(next,parentId).filter(t=>t.projectId===task.projectId);
-      const index=action==='child'?siblings.length:siblings.findIndex(t=>t.id===id)+1;
-      const created={id:uid(),title:'Task mới',projectId:task.projectId,parentId,order:0,notes:'',attachments:[],done:false,createdAt:new Date().toISOString()};
-      next=moveTask([...next,created],created.id,parentId,index);
-      setQuery('');setFilter('all');setTagFilter('');setCollapsed(old=>{const result=new Set(old);result.delete(parentId);return result;});setInlineId(created.id);
-    }else if(action==='indent'||action==='outdent'){
-      const moved=indentTask(next,id,action==='outdent');
-      if(moved===next)notify(action==='indent'?'Cần một task cùng cấp phía trước để thụt vào.':'Task đã ở cấp lớn nhất.');
-      next=moved;const parentId=next.find(t=>t.id===id).parentId;
-      setCollapsed(old=>{const result=new Set(old);result.delete(parentId);return result;});
-    }else setInlineId(current=>current===id?null:current);
-    if(next!==latest.tasks)update({...latest,tasks:next});
+function App() {
+  const [route, setRoute] = React.useState(parseRoute);
+  const [projects, setProjects] = React.useState(null);
+  const [attention, setAttention] = React.useState({ questions: [], blocked: [], pending: [] });
+  const [online, setOnline] = React.useState(true);
+  const [error, setError] = React.useState('');
+  const onError = React.useCallback((e) => { setError(e.message); setTimeout(() => setError(''), 6000); }, []);
+
+  React.useEffect(() => {
+    const onHash = () => setRoute(parseRoute());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  React.useEffect(() => subscribe(() => {
+    call('projects.list').then(setProjects).catch(onError);
+    call('attention').then(setAttention).catch(onError);
+    window.dispatchEvent(new Event('nhanh-change'));
+  }, setOnline), [onError]);
+
+  const needsYou = attention.questions.length + attention.blocked.length;
+  const active = (projects || []).filter((p) => !p.archived);
+
+  const newProject = async () => {
+    const title = window.prompt('Tên dự án mới:')?.trim();
+    if (title) call('project.create', { title }).then((p) => go(projectPath(p.id))).catch(onError);
+  };
+
+  return (
+    <div className="app">
+      <nav className="side">
+        <div className="brand">Nhánh</div>
+        <a className={`nav ${route.view === 'home' ? 'on' : ''}`} href="#/"><LayoutGrid size={16} /> Tổng quan</a>
+        <a className={`nav ${route.view === 'inbox' ? 'on' : ''}`} href="#/inbox">
+          <Bell size={16} /> Cần bạn {needsYou > 0 && <span className="badge">{needsYou}</span>}
+        </a>
+        <div className="side-title">Dự án</div>
+        {active.map((p) => (
+          <a key={p.id} className={`nav ${route.projectId === p.id ? 'on' : ''}`} href={`#${projectPath(p.id)}`}>
+            <span className={`dot ${p.summary.doing.length ? 'dot-doing' : ''}`} />
+            <span className="grow ellipsis">{p.title}</span>
+            <span className="muted">{pct(p.summary.progress)}</span>
+          </a>
+        ))}
+        <button className="nav nav-add" onClick={newProject}><Plus size={16} /> Dự án mới</button>
+        <div className={`conn ${online ? '' : 'off'}`}>{online ? 'Đang kết nối' : 'Mất kết nối với server…'}</div>
+      </nav>
+
+      <main className="main">
+        {error && <div className="toast" role="alert">{error}</div>}
+        {projects === null ? <p className="muted pad">Đang tải…</p>
+          : route.view === 'inbox' ? <Inbox attention={attention} onError={onError} />
+          : route.view === 'project' ? <Project key={route.projectId} projectId={route.projectId} taskId={route.taskId} onError={onError} />
+          : <Home projects={active} onNew={newProject} />}
+      </main>
+    </div>
+  );
+}
+
+// ---- Tổng quan -------------------------------------------------------------------------------------------------
+function Home({ projects, onNew }) {
+  if (!projects.length) {
+    return (
+      <div className="pad empty">
+        <h1>Chưa có dự án nào</h1>
+        <p className="muted">Tạo một dự án, rồi để agent lập kế hoạch bằng <code>plan.apply</code>, hoặc tự thêm việc.</p>
+        <button className="btn btn-primary" onClick={onNew}><Plus size={16} /> Dự án mới</button>
+      </div>
+    );
   }
-  function addIdea(title,attachments){update({...data,ideas:[{id:uid(),title,notes:'',attachments,createdAt:new Date().toISOString()},...data.ideas]});notify('Đã cất ý tưởng của bạn.');}
-  function deleteTask(id){const ids=descendants(data.tasks,id);ids.add(id);update({...data,tasks:data.tasks.filter(t=>!ids.has(t.id))});notify('Đã xóa task và nhánh con. Bạn có thể hoàn tác.');}
-  function select(id){setStudio(false);setTagFilter('');setActive(id);setSidebar(false);setQuery('');setFilter('all');}
-  function exportData(){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`nhanh-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notify('Đã xuất bản sao lưu.');}
-  async function importData(file){if(!file)return;try{if(file.size>100*1024*1024)throw Error('Tệp sao lưu tối đa 100 MB.');const imported=validateData(JSON.parse(await file.text()));update(imported);select(imported.projects[0]?.id||'ideas');notify('Đã nhập dữ liệu. Có thể hoàn tác để quay lại.');}catch(e){notify(e.message||'Không đọc được bản sao lưu.');}}
-  function onDragEnd(event){setDragging(null);const id=event.active.id,target=event.over?.data.current;if(!target||!id||target.task?.id===id)return;let parentId=null,index=Infinity;if(target.task){parentId=target.position==='inside'?target.task.id:target.task.parentId;if(target.position!=='inside'){const siblings=children(tasks,parentId).filter(t=>t.id!==id);index=siblings.findIndex(t=>t.id===target.task.id)+(target.position==='after'?1:0);}}const moved=moveTask(data.tasks,id,parentId,index);if(moved!==data.tasks)update({...data,tasks:moved});}
-  const visible=[];const stack=roots.slice().reverse().map(t=>[t,0]);const matching=new Set();
-  if(query.trim()||filter!=='all'||tagFilter){for(const t of tasks){if((!query.trim()||`${t.title} ${t.notes}`.toLowerCase().includes(query.toLowerCase()))&&(!tagFilter||(t.tagIds||[]).includes(tagFilter))&&(filter==='all'||(filter==='done'?map[t.id]===100:map[t.id]<100))){let node=t;while(node){matching.add(node.id);node=tasks.find(x=>x.id===node.parentId);}}}}
-  while(stack.length){const [t,depth]=stack.pop();if((query.trim()||filter!=='all'||tagFilter)&&!matching.has(t.id))continue;visible.push([t,depth]);if(!collapsed.has(t.id)||query.trim()||filter!=='all'||tagFilter)for(const sub of children(tasks,t.id).reverse())stack.push([sub,depth+1]);}
-  return <div className={`app-shell task-first ${sidebar?'menu-visible':''}`}>
-    {sidebar&&<div className="sidebar-overlay" onClick={()=>setSidebar(false)}/>}
-    <aside className={`sidebar ${sidebar?'open':''}`}><a className="brand" href="#" onClick={e=>e.preventDefault()}><span className="brand-mark"><Sprout size={24}/></span>nhánh<span className="brand-dot">.</span></a><div className="workspace-label"><span className="avatar">M</span><div>Không gian cá nhân<small>Mỗi ngày, một bước nhỏ</small></div><ChevronDown size={14}/></div>
-      <div className="nav-section">KHÔNG GIAN</div><button className={`nav-item ${isIdeas?'active':''}`} onClick={()=>select('ideas')}><Inbox size={18}/><span>Hộp ý tưởng</span><span className="count">{data.ideas.length}</span></button>
-      <button className="nav-item" onClick={()=>{setSidebar(false);setManageTags(true);}}><Tag size={18}/><span>Quản lý tag</span><span className="count">{tags.length}</span></button><div className="nav-section project-nav-label"><span>DỰ ÁN CỦA TÔI</span><IconButton label="Tạo dự án" onClick={()=>setProjectModal({})}><Plus size={16}/></IconButton></div>
-      <nav>{data.projects.map(p=><button className={`nav-item ${active===p.id?'active':''}`} key={p.id} onClick={()=>select(p.id)}><span className="project-dot" style={{background:p.color}}/><span className="nav-project-title">{p.title}</span><span className="project-percent">{Math.round(projectProgress(data.tasks,p.id))}%</span></button>)}</nav><button className="new-project" onClick={()=>setProjectModal({})}><Plus size={16}/>Dự án mới</button>
-      <div className="sidebar-bottom"><div className="grow-note"><span>🌱</span><p>Việc lớn bắt đầu<br/>từ những nhánh nhỏ.</p></div><div className="backup-actions"><button onClick={exportData}><Download size={15}/>Xuất dữ liệu</button><button onClick={()=>importRef.current.click()}><Upload size={15}/>Nhập</button><input ref={importRef} hidden type="file" accept="application/json,.json" onChange={e=>{importData(e.target.files[0]);e.target.value='';}}/></div><p className={`local-status ${saveError?'danger-text':''}`}><i/>{saveError?'Chưa lưu · hãy xuất sao lưu':saving?'Đang lưu…':'Đã lưu vào thư mục .local'}</p></div>
-    </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb"><IconButton label={sidebar?"Thu gọn menu":"Mở menu"} onClick={()=>setSidebar(v=>!v)}><Menu size={20}/></IconButton><span>Không gian cá nhân</span><ChevronRight size={14}/><strong>{isIdeas?'Hộp ý tưởng':project?.title}</strong></div><div className="topbar-right"><button className="utility-button" onClick={()=>select(isIdeas?(data.projects[0]?.id||'ideas'):'ideas')}><Inbox size={16}/>{isIdeas?'Task':'Ý tưởng'}</button><IconButton label="Hoàn tác" disabled={!history.length} onClick={undo}><Undo2 size={17}/></IconButton><span className="private-tag"><span/>Chỉ của bạn</span><span className="avatar small-avatar">M</span></div></header>
-      <main><div className="page-heading"><div className={`page-icon ${isIdeas?'idea-icon':''}`}>{isIdeas?<Lightbulb size={27}/>:<FolderOpen size={27}/>}</div><div className="heading-tools"><IconButton label="Hoàn tác" disabled={!history.length} onClick={undo}><Undo2 size={18}/></IconButton>{project&&<IconButton label="Sửa dự án" onClick={()=>setProjectModal(project)}><MoreHorizontal size={22}/></IconButton>}</div></div>
-      <div className="title-line"><h1>{isIdeas?'Chỗ cho những ý tưởng':project?.title}</h1><span className="outline-tag">{isIdeas?'THU THẬP & KHÁM PHÁ':'DỰ ÁN CÁ NHÂN'}</span></div><p className="page-description">{isIdeas?'Đừng để một ý tưởng hay trôi qua. Cất ở đây, rồi để nó lớn lên.':project?.description||'Chia nhỏ công việc. Tập trung vào bước tiếp theo.'}</p>
-      {!isIdeas&&<div className="tree-toolbar"><span className="tree-project-progress"><span className="live-dot"/>{pct}% hoàn thành <span>· {completed}/{roots.length} task lớn</span></span><div className="tree-tools"><button aria-expanded={studio} onClick={()=>setStudio(v=>!v)}>{studio?'Đóng document':'Design document'}</button><button onClick={()=>setCollapsed(new Set())}>Mở tất cả</button><button onClick={()=>setCollapsed(new Set(tasks.filter(t=>tasks.some(c=>c.parentId===t.id)).map(t=>t.id)))}>Thu tất cả</button><button aria-expanded={overview} onClick={()=>setOverview(v=>!v)}>{overview?'Ẩn tổng quan':'Tổng quan'}</button><IconButton label="Sửa dự án" onClick={()=>setProjectModal(project)}><MoreHorizontal size={18}/></IconButton></div></div>}
-      {!isIdeas&&studio&&<ProjectStudio key={project.id} project={project} saving={saving} saveError={saveError} notify={notify} onSave={({document,sections})=>{const latest=currentData.current;update({...latest,projects:latest.projects.map(p=>p.id===project.id?{...p,designDocument:document,documentSections:sections}:p)});}}/>}
-      {!isIdeas&&overview&&<div className="project-overview"><div className="progress-summary"><div className="section-eyebrow"><span className="live-dot"/>TIẾN ĐỘ DỰ ÁN</div><div className="progress-number">{pct}<span>%</span><span className="progress-message">{pct===100&&roots.length?'Bạn đã làm được! ✨':pct>0?'Đang dần thành hình':'Sẵn sàng bắt đầu'}</span></div><div className="progress-track"><i style={{width:`${pct}%`}}/></div><p>Trung bình tiến độ của {roots.length} task cấp lớn</p></div><div className="overview-stat"><span className="stat-icon"><LayoutList size={19}/></span><strong>{roots.length}</strong><span>Task cấp lớn</span></div><div className="overview-stat"><span className="stat-icon green"><CheckCheck size={19}/></span><strong>{completed}<small>/{roots.length}</small></strong><span>Đã hoàn thành</span></div></div>}
-      <div className="work-section"><div className="work-toolbar"><div className="tabs">{isIdeas?<button className="selected"><Inbox size={16}/>Ý tưởng của bạn <span>{data.ideas.length}</span></button>:<><button className={filter==='all'?'selected':''} onClick={()=>setFilter('all')}><LayoutList size={16}/>Tất cả <span>{tasks.length}</span></button><button className={filter==='todo'?'selected':''} onClick={()=>setFilter('todo')}>Chưa xong</button><button className={filter==='done'?'selected':''} onClick={()=>setFilter('done')}>Đã xong</button></>}</div><div className="filter-tools">{!isIdeas&&<select className="tag-filter" aria-label="Lọc theo tag" value={tagFilter} onChange={e=>setTagFilter(e.target.value)}><option value="">Tất cả tag</option>{tags.map(tag=><option key={tag.id} value={tag.id}>{tag.name}</option>)}</select>}<div className="search-box"><Search size={16}/><input aria-label="Tìm kiếm" placeholder="Tìm nhanh…" value={query} onChange={e=>setQuery(e.target.value)}/>{query&&<IconButton label="Xóa tìm kiếm" onClick={()=>setQuery('')}><X size={13}/></IconButton>}</div></div></div>
-      <Composer key={active} onSubmit={isIdeas?addIdea:addTask} idea={isIdeas} notify={notify}/>
-      {isIdeas?<div className="idea-grid">{data.ideas.filter(i=>`${i.title} ${i.notes}`.toLowerCase().includes(query.toLowerCase())).map(idea=><article className="idea-card" key={idea.id}><div className="idea-card-top"><span><Lightbulb size={14}/>Ý TƯỞNG</span><IconButton label="Xóa ý tưởng" onClick={()=>{update({...data,ideas:data.ideas.filter(i=>i.id!==idea.id)});notify('Đã xóa ý tưởng. Có thể hoàn tác.');}}><Trash2 size={15}/></IconButton></div><h3>{idea.title}</h3>{idea.notes&&<p>{idea.notes}</p>}<Attachments items={idea.attachments}/><div className="idea-card-bottom"><span>{dateLabel(idea.createdAt)}</span><select aria-label={`Chuyển ý tưởng ${idea.title} thành task`} value="" onChange={e=>{const projectId=e.target.value;if(!projectId)return;update({...data,ideas:data.ideas.filter(i=>i.id!==idea.id),tasks:[...data.tasks,{...idea,id:uid(),projectId,parentId:null,order:data.tasks.filter(t=>t.projectId===projectId&&t.parentId===null).length,done:false}]});notify('Đã chuyển ý tưởng thành task.');}}><option value="">Tạo thành task ↗</option>{data.projects.map(p=><option value={p.id} key={p.id}>{p.title}</option>)}</select></div></article>)}{!data.ideas.length&&<div className="empty"><Lightbulb size={28}/><h3>Khoảng trống cho điều mới mẻ</h3><p>Lưu ý tưởng đầu tiên bằng text, ảnh hoặc giọng nói ở trên.</p></div>}</div>:<DndContext sensors={sensors} collisionDetection={args=>{const excluded=descendants(tasks,args.active.id);excluded.add(args.active.id);const droppableContainers=args.droppableContainers.filter(c=>!excluded.has(c.data.current?.task?.id));const filtered={...args,droppableContainers};return args.pointerCoordinates?pointerWithin(filtered):closestCenter(filtered);}} onDragStart={e=>setDragging(e.active.id)} onDragCancel={()=>setDragging(null)} onDragEnd={onDragEnd}><div className="task-list"><div className="list-heading"><span>TÊN CÔNG VIỆC</span><span>TIẾN ĐỘ</span></div>{visible.map(([t,depth])=><TaskRow key={t.id} task={t} tags={tags} onTagsChange={ids=>changeTags(t.id,ids)} onTagCreate={name=>createTag(t.id,name)} depth={depth} map={map} subtasks={children(tasks,t.id)} collapsed={collapsed.has(t.id)} toggleCollapse={()=>setCollapsed(old=>{const s=new Set(old);s.has(t.id)?s.delete(t.id):s.add(t.id);return s;})} onToggle={done=>update({...data,tasks:toggleBranch(data.tasks,t.id,done)})} onEdit={()=>setEdit(t.id)} onAdd={()=>inlineAction(t.id,null,'child')} editing={inlineId===t.id} onStartEditing={()=>setInlineId(t.id)} onInline={(title,action)=>inlineAction(t.id,title,action)} onMove={()=>setEdit(t.id)} dragging={dragging}/>)}{!visible.length&&<div className="empty"><Sprout size={30}/><h3>{query||filter!=='all'?'Chưa có task phù hợp':'Gieo nhánh đầu tiên'}</h3><p>{query||filter!=='all'?'Thử từ khóa hoặc bộ lọc khác.':'Thêm một task ở trên, rồi chia nhỏ theo cách của bạn.'}</p></div>}{dragging&&<DropZone id="root" data={{position:'root'}} className="root-drop">Thả vào đây để chuyển thành task cấp lớn</DropZone>}</div><DragOverlay>{dragging&&<div className="drag-preview"><GripVertical size={16}/>{tasks.find(t=>t.id===dragging)?.title}</div>}</DragOverlay></DndContext>}
-      <div className="work-footer"><span><span className="live-dot"/>{isIdeas?'Ý tưởng nhỏ. Khả năng lớn.':'Một bước nhỏ hôm nay, một dự án hoàn thiện ngày mai.'}</span>{!isIdeas&&<span className="desktop-hint">Nhấn tên để sửa · Enter: cùng cấp · Tab / Shift+Tab: đổi cấp · Esc: thoát</span>}</div></div><footer className="page-footer"><Sprout size={15}/>Để mọi việc lớn đều có một khởi đầu nhỏ.</footer>
-      </main></div>
-    {toast&&<div className="toast" role="status"><Check size={17}/><span>{toast}</span><IconButton label="Đóng thông báo" onClick={()=>setToast('')}><X size={16}/></IconButton></div>}
-    {edit&&data.tasks.find(t=>t.id===edit)&&<TaskEditor task={data.tasks.find(t=>t.id===edit)} tasks={data.tasks} projects={data.projects} notify={notify} onClose={()=>setEdit(null)} onDelete={deleteTask} onSave={(task,parentId)=>{const updated=data.tasks.map(t=>t.id===task.id?task:t);update({...data,tasks:parentId===task.parentId?updated:moveTask(updated,task.id,parentId)});}}/>}
-    {childModal&&<Modal title={`Thêm nhánh cho “${childModal.title}”`} onClose={()=>setChildModal(null)}><Composer notify={notify} onSubmit={(title,a)=>{addTask(title,a,childModal.id);setCollapsed(s=>{const n=new Set(s);n.delete(childModal.id);return n;});setChildModal(null);}}/></Modal>}
-    {manageTags&&<Modal title="Quản lý tag" onClose={()=>setManageTags(false)}><TagManager tags={tags} tasks={data.tasks} onSave={(id,changes)=>update(editTag(currentData.current,id,changes))} onDelete={id=>{update(removeTag(currentData.current,id));if(tagFilter===id)setTagFilter('');}}/></Modal>}
-    {projectModal&&<ProjectEditor project={projectModal} onClose={()=>setProjectModal(null)} onSave={(p,templateId)=>{const latest=currentData.current;const exists=latest.projects.some(x=>x.id===p.id);if(!exists&&!p.designDocument)p={...p,designDocument:defaultDocument(p)};const added=exists?[]:instantiateTemplate(templateId,p.id,availableTags(latest));update({...latest,projects:exists?latest.projects.map(x=>x.id===p.id?p:x):[...latest.projects,p],tasks:[...latest.tasks,...added]});select(p.id);if(added.length)setCollapsed(new Set(added.filter(t=>t.parentId!==null).map(t=>t.id)));setProjectModal(null);}} onDelete={id=>{update({...data,projects:data.projects.filter(p=>p.id!==id),tasks:data.tasks.filter(t=>t.projectId!==id)});select(data.projects.find(p=>p.id!==id)?.id||'ideas');setProjectModal(null);notify('Đã xóa dự án. Có thể hoàn tác.');}}/>}
-  </div>
+  return (
+    <div className="pad">
+      <h1>Tổng quan</h1>
+      <div className="cards">
+        {projects.map((p) => {
+          const s = p.summary;
+          return (
+            <a key={p.id} className="card" href={`#${projectPath(p.id)}`}>
+              <div className="card-head">
+                <h2>{p.title}</h2>
+                <span className="chip">{STAGE_LABEL[p.stage] || p.stage}</span>
+              </div>
+              <div className="card-progress"><Bar value={s.progress} /><strong>{pct(s.progress)}</strong></div>
+              <div className="card-counts">
+                {['doing', 'blocked', 'todo', 'done'].map((k) => <span key={k} className={`count count-${k}`}><b>{s.counts[k]}</b> {STATUS_LABEL[k].toLowerCase()}</span>)}
+              </div>
+              <div className="card-now">
+                {s.doing.length
+                  ? s.doing.slice(0, 2).map((t) => <div key={t.id} className="ellipsis"><span className="dot dot-doing" /> {t.title} <span className="muted">· {actorName(t.owner)}</span></div>)
+                  : <span className="muted">Không có việc nào đang làm</span>}
+              </div>
+              <div className="card-foot">
+                {s.needsUser > 0 ? <span className="need">Cần bạn: {s.needsUser}</span> : <span />}
+                <span className="muted">{s.lastEventAt ? `Hoạt động ${timeAgo(s.lastEventAt)}` : 'Chưa có hoạt động'}</span>
+              </div>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
-function ProjectEditor({project,onClose,onSave,onDelete}){const [title,setTitle]=useState(project.title||''),[description,setDescription]=useState(project.description||''),[color,setColor]=useState(project.color||'#dd784b'),[confirm,setConfirm]=useState(false),[templateId,setTemplateId]=useState('');const selectedTemplate=PROJECT_TEMPLATES.find(t=>t.id===templateId);return <Modal title={project.id?'Chỉnh sửa dự án':'Một dự án mới'} onClose={onClose}><form onSubmit={e=>{e.preventDefault();if(title.trim())onSave({...project,id:project.id||uid(),title:title.trim(),description,color,createdAt:project.createdAt||new Date().toISOString()},templateId);}}>{!project.id&&<section className="template-selector"><span className="template-label">Bắt đầu từ</span><div className="template-options"><button type="button" aria-pressed={!templateId} onClick={()=>setTemplateId('')}><Plus size={18}/><strong>Dự án trống</strong><small>Tự xây cây task</small></button>{PROJECT_TEMPLATES.map(t=><button type="button" key={t.id} aria-pressed={templateId===t.id} onClick={()=>{setTemplateId(t.id);if(!title||PROJECT_TEMPLATES.some(x=>x.title===title))setTitle(t.title);if(!description||PROJECT_TEMPLATES.some(x=>x.description===description))setDescription(t.description);setColor(t.color);}}><LayoutList size={18}/><strong>{t.name}</strong><small>{t.tasks.length} giai đoạn · {templateTaskCount(t)} task</small></button>)}</div>{selectedTemplate&&<div className="template-preview"><p>{selectedTemplate.summary}</p><ul>{selectedTemplate.tasks.map(t=><li key={t.title}>{t.title}</li>)}</ul><small>Task bắt đầu ở 0%, có ghi chú và tag hiện có. Bạn có thể sửa toàn bộ sau khi tạo.</small></div>}</section>}<label>Tên dự án<input required autoFocus placeholder="Bạn đang ấp ủ điều gì?" value={title} onChange={e=>setTitle(e.target.value)}/></label><label>Mô tả<textarea rows={3} placeholder="Một vài dòng về đích đến của bạn…" value={description} onChange={e=>setDescription(e.target.value)}/></label><label>Màu dự án<input type="color" value={color} onChange={e=>setColor(e.target.value)}/></label>{confirm&&<p className="danger-text">Xóa dự án và toàn bộ task? Bạn có thể hoàn tác sau khi xóa.</p>}<div className="modal-footer">{project.id?<button type="button" className="text-button danger" onClick={()=>confirm?onDelete(project.id):setConfirm(true)}><Trash2 size={16}/>{confirm?'Xác nhận xóa':'Xóa dự án'}</button>:<span/>}<button className="primary" disabled={!title.trim()}>{project.id?'Lưu thay đổi':'Tạo dự án'}<ArrowUpRight size={16}/></button></div></form></Modal>}
 
-createRoot(document.getElementById('root')).render(<App/>);
+// ---- Cần bạn ---------------------------------------------------------------------------------------------------
+function Inbox({ attention, onError }) {
+  const { questions, blocked, pending } = attention;
+  const TaskLink = ({ t }) => <a className="link" href={`#${projectPath(t.projectId, t.id)}`}>{t.title}</a>;
+  return (
+    <div className="pad narrow">
+      <h1>Cần bạn</h1>
+      {!questions.length && !blocked.length && <p className="muted">Không có gì đang chờ bạn. Agent cứ thế làm tiếp.</p>}
 
-import './tree.css';
+      {questions.length > 0 && <h3>Câu hỏi chờ bạn trả lời</h3>}
+      {questions.map((t) => (
+        <div key={t.id} className="inbox-item">
+          <div className="inbox-where"><span className="muted">{t.projectTitle} ·</span> <TaskLink t={t} /></div>
+          <QuestionBox task={t} onError={onError} />
+        </div>
+      ))}
+
+      {blocked.length > 0 && <h3>Việc bị chặn</h3>}
+      {blocked.map((t) => (
+        <div key={t.id} className="inbox-item">
+          <div className="inbox-where"><span className="muted">{t.projectTitle} ·</span> <TaskLink t={t} /></div>
+          <div className="blocked-box">
+            {t.blockedReason || '(không ghi lý do)'}
+            <div>
+              <button className="btn" onClick={() => call('task.unblock', { taskId: t.id, note: window.prompt('Đã gỡ chặn bằng cách nào? (agent sẽ đọc)')?.trim() || undefined }).catch(onError)}>Đã gỡ chặn</button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {pending.length > 0 && <h3>Bạn đã gửi, agent chưa nhận</h3>}
+      {pending.map((t) => (
+        <div key={t.id} className="inbox-item slim">
+          <span className="muted">{t.projectTitle} ·</span> <TaskLink t={t} />
+          <span className="muted"> · {t.question?.answer ? 'câu trả lời của bạn' : 'yêu cầu của bạn'}, sẽ được đọc ở đầu phiên làm việc tới</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---- One project -----------------------------------------------------------------------------------------------
+const FILTERS = [
+  ['all', 'Tất cả', () => true],
+  ['doing', 'Đang làm', (t) => t.rollup.status === 'doing'],
+  ['todo', 'Chờ làm', (t) => t.rollup.status === 'todo'],
+  ['need', 'Cần bạn', (t) => t.needsUser],
+  ['done', 'Xong', (t) => t.rollup.status === 'done'],
+];
+
+function Project({ projectId, taskId, onError }) {
+  const [data, setData] = React.useState(null);
+  const [tab, setTab] = React.useState('plan');
+  const [filter, setFilter] = React.useState('all');
+  const [closed, setClosed] = React.useState(() => new Set());
+  const [request, setRequest] = React.useState('');
+  const load = React.useCallback(() => call('project.get', { projectId, events: 300 }).then(setData).catch(onError), [projectId, onError]);
+  React.useEffect(() => { load(); window.addEventListener('nhanh-change', load); return () => window.removeEventListener('nhanh-change', load); }, [load]);
+  const openTask = React.useCallback((id) => go(projectPath(projectId, id)), [projectId]);
+  const closeTask = React.useCallback(() => go(projectPath(projectId)), [projectId]);
+  if (!data) return <p className="muted pad">Đang tải…</p>;
+
+  const { project: p, summary: s, tasks, events } = data;
+  const selected = tasks.find((t) => t.id === taskId);
+  const match = FILTERS.find((f) => f[0] === filter)[2];
+  // An item is shown when it or something below it matches the filter.
+  const visible = new Set();
+  const mark = (t) => {
+    const kids = childrenOf(tasks, t.id).map(mark);
+    const show = (t.kind === 'task' && match(t)) || kids.some(Boolean) || (filter === 'all');
+    if (show) visible.add(t.id);
+    return show;
+  };
+  childrenOf(tasks, null).forEach(mark);
+
+  const addRequest = (e) => {
+    e.preventDefault();
+    if (!request.trim()) return;
+    const parentId = selected?.kind === 'group' ? selected.id : undefined;
+    call('task.add', { projectId, title: request.trim(), parentId }).then(() => setRequest('')).catch(onError);
+  };
+  const toggle = (id) => setClosed((old) => { const next = new Set(old); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+
+  const rows = [];
+  const walk = (parentId, depth) => {
+    for (const t of childrenOf(tasks, parentId)) {
+      if (!visible.has(t.id)) continue;
+      const kids = childrenOf(tasks, t.id).length > 0;
+      rows.push(<Row key={t.id} t={t} depth={depth} hasKids={kids} closed={closed.has(t.id)} selected={t.id === taskId} onToggle={toggle} onOpen={openTask} />);
+      if (kids && !closed.has(t.id)) walk(t.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+
+  return (
+    <div className="project">
+      <div className="project-main">
+        <header className="project-head">
+          <div className="row">
+            <Editable className="project-title" value={p.title} onSave={(title) => title && call('project.update', { projectId, title }).catch(onError)} />
+            <select className="select" value={p.stage} onChange={(e) => call('project.update', { projectId, stage: e.target.value }).catch(onError)} aria-label="Giai đoạn">
+              {Object.entries(STAGE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+          <div className="project-progress">
+            <Bar value={s.progress} /><strong>{pct(s.progress)}</strong>
+            <span className="muted">{s.counts.done}/{s.counts.done + s.counts.todo + s.counts.doing + s.counts.blocked} việc xong</span>
+            {s.doing.length > 0 && <span className="doing-now"><span className="dot dot-doing" /> {s.doing.length} đang làm</span>}
+            {s.needsUser > 0 && <span className="need">Cần bạn: {s.needsUser}</span>}
+          </div>
+          <div className="tabs" role="tablist">
+            {[['plan', 'Kế hoạch'], ['journal', 'Nhật ký'], ['notes', 'Ghi chú']].map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>{label}</button>
+            ))}
+          </div>
+        </header>
+
+        {tab === 'plan' && (
+          <>
+            <form className="request" onSubmit={addRequest}>
+              <input className="input grow" value={request} onChange={(e) => setRequest(e.target.value)}
+                placeholder={selected?.kind === 'group' ? `Thêm yêu cầu vào "${selected.title}"…` : 'Thêm yêu cầu cho agent… (Enter)'} />
+              <button className="btn btn-primary" disabled={!request.trim()}><Send size={14} /> Gửi</button>
+            </form>
+            <div className="filters">
+              {FILTERS.map(([id, label, test]) => {
+                const n = id === 'all' ? null : tasks.filter((t) => t.kind === 'task' && test(t)).length;
+                return <button key={id} className={`filter ${filter === id ? 'on' : ''}`} onClick={() => setFilter(id)}>{label}{n !== null && <span className="muted"> {n}</span>}</button>;
+              })}
+            </div>
+            {tasks.length === 0
+              ? <div className="empty"><p>Dự án chưa có kế hoạch.</p><p className="muted">Agent lập kế hoạch ở đầu phiên làm việc (<code>plan.apply</code>), hoặc bạn gõ yêu cầu đầu tiên ở ô phía trên.</p></div>
+              : rows.length === 0 ? <p className="muted pad">Không có việc nào khớp bộ lọc.</p>
+              : <div className="tree" role="tree">{rows}</div>}
+          </>
+        )}
+        {tab === 'journal' && <div className="pad-x"><Journal events={events} tasks={tasks} onOpenTask={openTask} /></div>}
+        {tab === 'notes' && <Notes project={p} onError={onError} />}
+      </div>
+      {taskId && <TaskPanel taskId={taskId} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
+    </div>
+  );
+}
+
+function Row({ t, depth, hasKids, closed, selected, onToggle, onOpen }) {
+  const group = t.kind === 'group';
+  const r = t.rollup;
+  const openQuestion = t.question && !t.question.answer;
+  const crit = t.criteria.length ? `${t.criteria.filter((c) => c.done).length}/${t.criteria.length}` : '';
+  return (
+    <div role="treeitem" aria-selected={selected} tabIndex={0}
+      className={`tr ${group ? 'tr-group' : ''} ${selected ? 'on' : ''} st-row-${r.status}`} style={{ paddingLeft: 12 + depth * 22 }}
+      onClick={() => onOpen(t.id)} onKeyDown={(e) => e.key === 'Enter' && onOpen(t.id)}>
+      {hasKids
+        ? <button className="caret" aria-label={closed ? 'Mở' : 'Thu'} onClick={(e) => { e.stopPropagation(); onToggle(t.id); }}>{closed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</button>
+        : <span className="caret" />}
+      {!group && <StatusIcon status={t.status} question={openQuestion} />}
+      <span className="tr-title ellipsis">{t.title}</span>
+      {t.origin === 'agent' && <span className="tag tag-agent" title={t.reason}>agent thêm</span>}
+      {t.origin === 'user' && <span className="tag tag-user">bạn yêu cầu{t.needsAgent ? ' · chưa nhận' : ''}</span>}
+      {t.labels?.slice(0, 2).map((l) => <span key={l} className="tag">{l}</span>)}
+      <span className="tr-right">
+        {t.status === 'doing' && t.owner && <span className="owner">{actorName(t.owner)}</span>}
+        {crit && !group && <span className="muted crit">{crit}</span>}
+        {t.size && <span className={`size size-${t.size}`}>{t.size}</span>}
+        {(group || hasKids) && <><Bar value={r.progress} status={r.status} /><span className="muted pctnum">{pct(r.progress)}</span></>}
+      </span>
+    </div>
+  );
+}
+
+function Notes({ project, onError }) {
+  const [editing, setEditing] = React.useState(false);
+  const save = (brief) => call('project.update', { projectId: project.id, brief }).catch(onError);
+  return (
+    <div className="pad-x notes">
+      <div className="row">
+        <span className="muted grow">Ghi chú của dự án (Markdown): mục tiêu, phạm vi, liên kết tới GDD trong repo{project.repo ? ` ${project.repo}` : ''}.</span>
+        <button className="btn" onClick={() => setEditing(!editing)}>{editing ? 'Xem' : 'Sửa'}</button>
+      </div>
+      {editing
+        ? <Editable multiline className="notes-edit" value={project.brief || ''} placeholder="Viết ghi chú… (Ctrl+Enter hoặc bấm ra ngoài để lưu)" onSave={save} />
+        : project.brief ? <div className="markdown"><Markdown>{project.brief}</Markdown></div> : <p className="muted">Chưa có ghi chú.</p>}
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App />);

@@ -1,24 +1,155 @@
 #!/usr/bin/env node
-import fs from 'node:fs/promises';
-const base=(process.env.NHANH_URL||'http://127.0.0.1:5173').replace(/\/$/,'');
-const request=(url,options={})=>fetch(url,{...options,redirect:'error',signal:AbortSignal.timeout(15000)});
-const [command='help',...rest]=process.argv.slice(2);
-if(command==='help'){
-  console.log(`nhanh local workflow CLI
-  node scripts/nhanh.mjs tools
-  node scripts/nhanh.mjs projects.list
-  node scripts/nhanh.mjs tasks.create --file request.json
-  node scripts/nhanh.mjs tasks.update --stdin
+// Command-line client of the tracker. No dependencies; Node.js 22+.
+//
+//   node nhanh.mjs actions                           every action with its arguments
+//   node nhanh.mjs digest <projectId>                what to read when a session starts
+//   node nhanh.mjs tree <projectId>                  the whole plan as text
+//   node nhanh.mjs <action> key=value ...            short arguments
+//   node nhanh.mjs <action> --file request.json      long or multi-line arguments ({...arguments})
+//   node nhanh.mjs <action> --stdin                  the same from standard input
+//
+// Options: --actor <name> (or NHANH_ACTOR), --request <id> (safe retry), --raw (full JSON instead of text).
+// NHANH_URL changes the server (default http://127.0.0.1:5173). Errors go to stderr with exit code 1.
+import fs from 'node:fs';
 
-JSON input: {"arguments":{...},"options":{"actor":"codex","expectedRevision":12,"requestId":"unique-operation-id"}}
-Use tools to discover names and JSON schemas. Reads return {revision,result}; send that revision for guarded writes.
-NHANH_URL defaults to http://127.0.0.1:5173. Errors are JSON on stderr and exit code 1.`);
-}else try{
-  const url=new URL(base);
-  if(!['127.0.0.1','localhost'].includes(url.hostname)||url.protocol!=='http:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw Error('NHANH_URL must be an HTTP localhost origin');
-  const health=await request(base+'/api/health');if(!health.ok||(await health.json()).service!=='nhanh-local')throw Error('Endpoint is not a Nhanh local service');
-  const session=await request(base+'/api/session');if(!session.ok)throw Error('Local server unavailable');const {token}=await session.json();
-  let payload={};if(rest[0]==='--file')payload=JSON.parse(await fs.readFile(rest[1],'utf8'));else if(rest[0]==='--stdin'){let text='';for await(const chunk of process.stdin)text+=chunk;payload=JSON.parse(text);}else if(rest.length)throw Error('Use --file or --stdin for JSON (no shell interpolation)');
-  const response=await request(base+(command==='tools'?'/api/tools':'/api/tools/call'),{method:command==='tools'?'GET':'POST',headers:{'Content-Type':'application/json','X-Nhanh-Token':token},...(command==='tools'?{}:{body:JSON.stringify({name:command,arguments:payload.arguments||{},options:payload.options||{}})})});
-  const result=await response.json();if(!response.ok)throw Error(`${response.status}: ${result.error}`);console.log(JSON.stringify(result,null,2));
-}catch(e){console.error(JSON.stringify({error:e.message}));process.exitCode=1;}
+const BASE = (process.env.NHANH_URL || 'http://127.0.0.1:5173').replace(/\/$/, '');
+
+function parseCommandLine(argv) {
+  const out = { action: undefined, args: {}, positional: [], actor: process.env.NHANH_ACTOR, requestId: undefined, raw: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--raw') out.raw = true;
+    else if (a === '--actor') out.actor = argv[++i];
+    else if (a === '--request') out.requestId = argv[++i];
+    else if (a === '--file') Object.assign(out.args, JSON.parse(fs.readFileSync(argv[++i], 'utf8').replace(/^﻿/, '')));
+    else if (a === '--stdin') Object.assign(out.args, JSON.parse(fs.readFileSync(0, 'utf8')));
+    else if (a === '--json') Object.assign(out.args, JSON.parse(argv[++i]));
+    else if (/^[A-Za-z]+=/.test(a)) {
+      const [key, ...rest] = a.split('=');
+      const text = rest.join('=');
+      // check=1,2 or labels=a,b style lists are not guessed: use JSON for anything that is not plain text.
+      try { out.args[key] = /^(\[|\{|true$|false$|null$|-?\d+(\.\d+)?$)/.test(text) ? JSON.parse(text) : text; } catch { out.args[key] = text; }
+    } else if (out.action === undefined) out.action = a; // options may come before or after the action
+    else out.positional.push(a);
+  }
+  return out;
+}
+
+async function http(path, init) {
+  let res;
+  try {
+    res = await fetch(BASE + path, init);
+  } catch {
+    throw Error(`The tracker does not answer at ${BASE}. It is optional: carry on with the work and say so; do not start a second server.`);
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw Error(body.error || `HTTP ${res.status}`);
+  return body;
+}
+
+async function call(name, args, { actor, requestId } = {}) {
+  const health = await http('/api/health');
+  if (health.service !== 'nhanh-local') throw Error(`${BASE} is not the tracker; no data was sent.`);
+  const { token } = await http('/api/session');
+  return http('/api/call', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Nhanh-Token': token },
+    body: JSON.stringify({ name, arguments: args, actor, requestId }),
+  });
+}
+
+// ---- text output: short, so reading the tracker costs an agent few tokens ----------------------------------------
+const MARK = { todo: '○', doing: '●', blocked: '■', done: '✔', dropped: '✕' };
+const pct = (n) => `${Math.round(n * 100)}%`;
+const counts = (c) => ['doing', 'blocked', 'todo', 'done'].filter((s) => c[s]).map((s) => `${s} ${c[s]}`).join(' · ') || 'no tasks';
+
+function taskLine(t) {
+  const crit = t.criteria?.length ? ` ${t.criteria.filter((c) => c.done).length}/${t.criteria.length}` : '';
+  const who = t.status === 'doing' && t.owner ? ` — ${t.owner}${t.branch ? ` on ${t.branch}` : ''}` : '';
+  const origin = t.origin === 'user' ? ' (user request)' : t.origin === 'agent' ? ' (added by agent)' : '';
+  return `${MARK[t.status] || '○'} ${t.id}  ${t.title}${t.size ? ` [${t.size}]` : ''}${crit}${who}${origin}`;
+}
+function taskDetail(t, indent = '    ') {
+  const lines = [];
+  if (t.description) lines.push(`${indent}${t.description.split('\n').join(`\n${indent}`)}`);
+  for (const c of t.criteria || []) lines.push(`${indent}[${c.done ? 'x' : ' '}] ${c.id} ${c.text}`);
+  if (t.blockedReason && t.status === 'blocked') lines.push(`${indent}blocked: ${t.blockedReason}`);
+  if (t.question) lines.push(`${indent}question: ${t.question.text}${t.question.answer ? `\n${indent}ANSWER: ${t.question.answer}` : ' (not answered yet)'}`);
+  return lines;
+}
+
+function digestText(d) {
+  const out = [`${d.project.title} (${d.project.id}) · stage ${d.project.stage} · ${pct(d.summary.progress)} · ${counts(d.summary.counts)}`];
+  if (!d.planned) out.push('', 'NO PLAN YET: set it up with plan.apply (see the skill, "Set up the plan").');
+  const section = (title, list, detail) => {
+    if (!list.length) return;
+    out.push('', `${title}:`);
+    for (const t of list) { out.push(`  ${taskLine(t)}`); if (detail) out.push(...taskDetail(t)); }
+  };
+  section('INBOX — the user wrote this, no agent has picked it up (task.ack or task.start each)', d.inbox, true);
+  section('IN PROGRESS', d.doing, true);
+  section('BLOCKED', d.blocked, true);
+  section('WAITING FOR THE USER', d.waitingForUser.filter((t) => t.status !== 'blocked' && t.status !== 'doing'), true);
+  section('NEXT (in plan order)', d.next, true);
+  if (d.recent.length) {
+    out.push('', 'RECENT:');
+    for (const e of d.recent) out.push(`  ${e.at.slice(0, 16).replace('T', ' ')} ${e.actor} ${e.type}${e.taskId ? ` ${e.taskId}` : ''}: ${e.text.split('\n')[0].slice(0, 140)}`);
+  }
+  return out.join('\n');
+}
+
+function treeText(p) {
+  const out = [`${p.project.title} (${p.project.id}) · stage ${p.project.stage} · ${pct(p.summary.progress)} · ${counts(p.summary.counts)}`];
+  const walk = (parentId, depth) => {
+    for (const t of p.tasks.filter((x) => x.parentId === parentId).sort((a, b) => a.order - b.order)) {
+      const pad = '  '.repeat(depth + 1);
+      if (t.kind === 'group') out.push(`${pad}▸ ${t.id}  ${t.title}  ${pct(t.rollup.progress)} (${t.rollup.status})`);
+      else out.push(`${pad}${taskLine(t)}`);
+      walk(t.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out.join('\n');
+}
+
+function listText(projects) {
+  return projects.map((p) => {
+    const s = p.summary;
+    const doing = s.doing.map((t) => `${t.title} (${t.owner})`).join('; ');
+    return `${p.id}  ${p.title} · ${p.stage} · ${pct(s.progress)} · ${counts(s.counts)}${s.needsUser ? ` · needs the user: ${s.needsUser}` : ''}${doing ? `\n    doing: ${doing}` : ''}`;
+  }).join('\n') || 'No projects.';
+}
+
+async function main() {
+  const cmd = parseCommandLine(process.argv.slice(2));
+  if (!cmd.action || cmd.action === 'help' || cmd.action === '--help') {
+    console.log(fs.readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 12).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+    return;
+  }
+  if (cmd.action === 'actions') {
+    const { token } = await http('/api/session');
+    const { actions } = await http('/api/actions', { headers: { 'X-Nhanh-Token': token } });
+    if (cmd.raw) return console.log(JSON.stringify(actions, null, 2));
+    for (const a of actions) {
+      const args = Object.entries(a.arguments).map(([k, v]) => (v.includes('required') ? k : `${k}?`)).join(', ');
+      console.log(`${a.name}(${args})${a.readOnly ? '  [read]' : ''}\n    ${a.description}`);
+    }
+    return undefined;
+  }
+  // Shortcuts that take the project id as a plain word.
+  let name = cmd.action;
+  if (name === 'digest' || name === 'tree') {
+    if (cmd.positional[0]) cmd.args.projectId = cmd.positional[0];
+    name = name === 'tree' ? 'project.get' : 'digest';
+  }
+  const { result, seq } = await call(name, cmd.args, cmd);
+  if (cmd.raw) return console.log(JSON.stringify({ seq, result }, null, 2));
+  if (cmd.action === 'digest') return console.log(digestText(result));
+  if (cmd.action === 'tree') return console.log(treeText(result));
+  if (name === 'projects.list') return console.log(listText(result));
+  if (name === 'plan.apply') return console.log(`created ${result.created.length}, updated ${result.updated.length}${result.created.length ? `\n${result.created.join('\n')}` : ''}`);
+  if (name.startsWith('task.') && result?.id) return console.log([taskLine(result), ...taskDetail(result, '  ')].join('\n'));
+  return console.log(JSON.stringify(result, null, 2));
+}
+
+main().catch((e) => { console.error(`nhanh: ${e.message}`); process.exitCode = 1; });
