@@ -1,91 +1,97 @@
-# Nhánh — local project API & workspace
+# Nhánh — bảng điều khiển dự án cho người và agent
 
-Dịch vụ local để người và agent cùng quản lý dự án. Web UI giữ cây task, kéo thả, checkbox, tag, ảnh/ghi âm, template Game/Product và design document. Không có chat agent hoặc cloud hosting.
+Dịch vụ chạy trên máy (local) để một người theo dõi nhiều agent tự làm việc: mỗi dự án có kế hoạch theo mốc, biết
+agent nào đang làm gì, việc nào xong kèm bằng chứng, và việc nào đang chờ bạn. Agent ghi qua API hoặc CLI; bạn đọc,
+trả lời câu hỏi và thêm yêu cầu trên web UI. Không có cloud, không có chat.
 
 ## Khởi động
 
-Node.js 22.12+ hoặc 24+, npm:
+Node.js 22.12+ hoặc 24+:
 
 ```sh
-npm install
+npm ci
 npm run build
 npm start
 ```
 
-Mở http://127.0.0.1:5173. `npm start` phục vụ cả REST-style tool API và UI đã build, không dùng Vite runtime. `npm run api` tương đương; vẫn chạy API nếu chưa build UI. Khi phát triển dùng `npm run dev` (cùng API, hot reload). Chỉ chạy một server cho một thư mục dữ liệu. `PORT` đổi cổng; `NHANH_DATA_DIR` đặt thư mục dữ liệu của server độc lập. Mặc định `.local` trong repo. Dịch vụ chỉ lắng nghe 127.0.0.1.
+Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đổi cổng; `NHANH_DATA_DIR` đổi thư mục dữ liệu
+(mặc định `.local/` trong repo). Mỗi thư mục dữ liệu chỉ chạy một server. `npm run dev` chạy cùng API với hot reload.
 
-## Agent workflow
+## Web UI
 
-Xem [hướng dẫn cho agent](docs/AGENT_WORKFLOW.md). Agent có thể gọi HTTP trực tiếp hoặc CLI từ bất kỳ repo nào:
+- **Tổng quan**: mỗi dự án một thẻ: giai đoạn, tiến độ, số việc theo trạng thái, việc đang làm và ai làm, số việc
+  cần bạn, hoạt động gần nhất.
+- **Cần bạn**: câu hỏi agent gửi (trả lời ngay tại chỗ), việc bị chặn, và những gì bạn đã gửi mà agent chưa nhận.
+- **Dự án → Kế hoạch**: cây mốc → việc → việc con, có trạng thái, cỡ S/M/L, người làm, tiêu chí đã đạt, nhãn
+  "agent thêm" / "bạn yêu cầu". Ô trên cùng để gõ yêu cầu mới cho agent. Bấm một việc để mở chi tiết: mô tả, tiêu
+  chí nghiệm thu, kết quả và bằng chứng, câu hỏi, nhật ký.
+- **Nhật ký**: mọi thay đổi theo ngày: ai, lúc nào, làm gì, bằng chứng.
+- **Ghi chú**: Markdown của dự án (mục tiêu, phạm vi, liên kết tới GDD trong repo).
+
+Trang tự cập nhật ngay khi agent ghi (server-sent events).
+
+## Mô hình
+
+- **Dự án**: `id`, tên, giai đoạn (`idea`, `brief`, `gdd`, `playtest`, `production`, `release`, `live`), ghi chú.
+- **Nhóm** (mốc) chỉ chứa việc; trạng thái và tiến độ của nó tính từ các việc bên trong.
+- **Việc**: cỡ `S`/`M`/`L`, trạng thái `todo` / `doing` / `blocked` / `done` / `dropped`, tiêu chí nghiệm thu,
+  người làm (`owner`), chuyên gia (`agent`), nhánh git, kết quả và bằng chứng, câu hỏi cho bạn, nguồn gốc
+  (`plan` / `user` / `agent` kèm lý do).
+- **Tiến độ** tính theo cỡ (S = 1, M = 3, L = 8). Việc đang làm được tính theo tỉ lệ tiêu chí đã đạt, tối đa 90%;
+  chỉ `done` mới là 100%. Việc đã bỏ không tính.
+- **Nhật ký**: mỗi hành động ghi một dòng (5.000 dòng gần nhất).
+
+## Agent
+
+Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tracker giữ trạng thái nhất quán:
+
+| Hành động | Ý nghĩa |
+|---|---|
+| `digest` | Đọc đầu phiên: hộp thư (bạn vừa viết gì), việc đang làm, bị chặn, việc tiếp theo |
+| `plan.apply` | Lập hoặc bổ sung kế hoạch trong một lần gọi; gọi lại an toàn, không xoá gì |
+| `task.start` / `task.progress` / `task.done` | Bắt đầu, báo tiến độ (tick tiêu chí), đóng kèm tóm tắt và bằng chứng |
+| `task.add` | Việc phát sinh; agent phải ghi lý do |
+| `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
+| `task.block` / `task.unblock` / `task.release` / `task.reopen` / `task.drop` | Chặn, gỡ chặn, trả lại, mở lại, bỏ |
+| `project.log` | Một dòng nhật ký cho thay đổi nhỏ không cần task |
+
+`task.done` bị từ chối khi còn tiêu chí chưa tick (trừ khi ghi `unmet`) hoặc khi việc cỡ M/L không có bằng chứng.
+Agent khác không sửa được việc đang do một agent làm (HTTP 409), trừ khi `takeover`. Chỉ bạn mới xoá được.
+
+CLI (không cần thư viện ngoài):
 
 ```sh
-node E:/GO/project-task-tracking/scripts/nhanh.mjs tools
-node E:/GO/project-task-tracking/scripts/nhanh.mjs projects.list
-node E:/GO/project-task-tracking/scripts/nhanh.mjs tasks.create --file request.json
+node scripts/nhanh.mjs actions                      # mọi hành động và tham số
+node scripts/nhanh.mjs digest cg01-mortalbound      # đọc đầu phiên
+node scripts/nhanh.mjs tree cg01-mortalbound        # cả kế hoạch dạng chữ
+node scripts/nhanh.mjs task.start taskId=hub branch=task/hub --actor claude-cg01
+node scripts/nhanh.mjs plan.apply --file plan.json --actor claude-cg01
 ```
 
-`tools` trả JSON schema của tất cả tool. File đầu vào có dạng:
-
-```json
-{
-  "arguments": {"projectId":"PROJECT_ID","title":"Implement player movement","notes":"Arrow keys move; collisions tested","tagIds":["gameplay"]},
-  "options": {"actor":"codex-game","requestId":"game-movement-v1"}
-}
-```
-
-Có thể pipe JSON qua `--stdin`. CLI xuất JSON ra stdout, lỗi ra stderr, exit code 1. `NHANH_URL` đổi URL localhost. CLI lấy session token tự động, không cần copy token/API key.
-
-Nhóm tool:
-
-| Nhóm | Tool |
-|---|---|
-| Dự án | `projects.list`, `projects.get`, `projects.create`, `projects.update` |
-| Document | `documents.get`, `documents.set`, `documents.section.create/update/move/delete` |
-| Task | `tasks.list`, `tasks.create`, `tasks.update`, `tasks.move`, `tasks.complete`, `tasks.delete` |
-| Phối hợp | `tasks.claim`, `tasks.release`, `activity.list` |
-| Tiến độ | `progress.get` |
-| Tag | `tags.list`, `tags.create`, `tags.update`, `tags.delete` |
-| Audit | `audit.check`, `audit.start`, `audit.list`, `audit.cancel`, `audit.apply` |
+Quy tắc đầy đủ cho agent (lập kế hoạch ban đầu, việc phát sinh, báo cáo, nhiều agent) nằm trong skill:
+[SKILL.md](skills/nhanh-project-tracking/SKILL.md) và [rules.md](skills/nhanh-project-tracking/references/rules.md).
 
 ## Giao thức HTTP
 
-- `GET /api/health`: kiểm tra service, không cần token.
-- `GET /api/session`: lấy token local. Không log hoặc commit token.
-- `GET /api/tools`: discovery JSON schema.
-- `POST /api/tools/call`: `{name, arguments, options}`.
-- Các endpoint sau session cần header `X-Nhanh-Token`; body JSON cần `Content-Type: application/json`.
-- Tool đọc/ghi dữ liệu trả `{revision,result}`. Audit job trả job/history trực tiếp vì chạy bất đồng bộ.
-- Lỗi trả `{error}`, HTTP 400 validation, 403 auth/origin, 404 không tìm thấy, 409 xung đột, 428 thiếu revision.
-- `GET/PUT /api/workspace` dành cho UI/import-export. Agent dùng tool để tránh thay toàn workspace.
+- `GET /api/health` → `{ok, service: "nhanh-local", apiVersion: 2}` (không cần token).
+- `GET /api/session` → `{token}`; mọi lời gọi khác gửi header `X-Nhanh-Token`.
+- `GET /api/actions` → danh sách hành động và tham số.
+- `POST /api/call` với `{name, arguments, actor, requestId}` → `{seq, result}`. `actor` bắt buộc khi ghi;
+  `requestId` giúp gọi lại an toàn (cùng actor, cùng tham số trả về kết quả lần đầu).
+- `GET /api/stream?token=…` → server-sent events, một sự kiện `change` cho mỗi lần ghi.
+- Lỗi: `{error}` với HTTP 400 (tham số), 403 (token, origin, quyền), 404, 409 (việc của agent khác, trùng requestId).
 
-## Người và nhiều agent cùng làm
+Chỉ nhận request từ localhost và từ chính trang do server phục vụ. Mọi tiến trình trên máy đều lấy được token:
+`actor` là nhãn để phối hợp, không phải xác thực.
 
-- Mỗi mutation được xếp hàng và ghi atomic. Các lệnh sửa/xóa/move/complete/document/apply yêu cầu `options.expectedRevision` lấy từ lần đọc gần nhất. Gặp 409: đọc lại, đánh giá thay đổi rồi thử lại; không ghi đè mù.
-- Dùng `options.actor` ổn định để nhận diện agent. Đây là nhãn phối hợp trong máy local, không phải xác thực danh tính.
-- `tasks.claim` nhận việc với lease mặc định 30 phút (1–1440 phút), có thể gọi lại để gia hạn. Agent khác không được sửa task đang có claim hợp lệ. `tasks.release` nhả việc. Người dùng vẫn có thể sửa qua UI.
-- `requestId` cho phép retry mutation mà không tạo task trùng; phải giữ nguyên actor + arguments. Giữ 1.000 receipt gần nhất. ID task/project do client cung cấp cũng ngăn tạo trùng.
-- Trạng thái task: `todo`, `in_progress`, `blocked`, `done`; lý do chặn ở `blockedReason`. Hoàn thành nhánh dùng `tasks.complete`, hoàn thành task lá có thể dùng `tasks.update`.
-- UI cập nhật từ server mỗi 2 giây khi không đang sửa/mở document hoặc modal. Lưu UI hợp nhất các trường không xung đột; hai bên sửa cùng trường thì báo lỗi và giữ bản UI để xuất sao lưu. Khi nhận thay đổi ngoài, lịch sử Undo trong tab được reset để tránh hoàn tác công việc của agent.
-- Tiến độ task = trung bình các nhánh con trực tiếp, lá = 0/100%. Tiến độ project = trung bình task gốc, mỗi gốc cùng trọng số.
-- `activity.list` ghi actor, action, task/project và thời gian (2.000 sự kiện gần nhất). Thay đổi toàn workspace qua UI được ghi `human/workspace.save`.
+## Dữ liệu
 
-## Document và audit
-
-Mỗi dự án có document riêng, nhập `.md`/`.txt`, sửa, preview và xuất từ **Design document**. Agent ngoài đọc/sửa qua `documents.get/set`. Lưu document trước khi lập roadmap.
-
-Audit được thực hiện bởi agent đang làm việc trong repo, theo [quy tắc audit Markdown](skills/nhanh-project-tracking/references/audit-rules.md). UI chỉ giữ nhập/sửa/preview/xuất document, không còn chọn model, chạy audit hoặc áp dụng đề xuất AI. API `audit.check/start/list/cancel/apply` vẫn có cho workflow bên ngoài; review bằng agent thứ hai là tùy chọn.
-
-Dùng đăng nhập CLI có sẵn. Không sử dụng Gemini/Google API key cho tác vụ AI; môi trường tiến trình audit loại bỏ API key, Codex sandbox read-only, agy plan mode. Mỗi bước tối đa 5 phút; có hủy và lịch sử. Không tự chuyển sang Gemini API khi CLI lỗi.
-
-## Dữ liệu và backup
-
-- `.local/workspace.json`: nguồn dữ liệu chính, revision, projects/tasks/ideas/tags/activity/receipts.
-- `.local/workspace.backup.json`: snapshot trước lần ghi gần nhất. Dừng server trước khi phục hồi; giữ bản hiện tại để đối chiếu.
-- `.local/projects/<hash>/design.md`, `project.json`, `tasks.json`: bản xuất theo project; không sửa trực tiếp khi server đang chạy.
-- `.local/runs/`: snapshot và kết quả audit. Thư mục dự án đã xóa được giữ để khôi phục.
-- `.local/server.lock`: ngăn chạy hai server cùng thư mục; kiểm tra PID trước khi thu hồi lock cũ.
-- Toàn bộ `.local/` gitignore và không được phục vụ qua HTTP. Sao lưu cả thư mục để giữ dữ liệu và audit. Xuất JSON trong UI giữ workspace; các file audit riêng cần backup thư mục.
-- Dữ liệu cũ vẫn được giữ. Các file chat cũ (nếu có) chỉ còn là dữ liệu lưu trữ trên đĩa; không có UI, API hay tiến trình chat sử dụng chúng.
+- `.local/workspace.json`: toàn bộ dữ liệu (phiên bản 2), ghi atomic, từng lần ghi một.
+- `.local/workspace.backup.json`: trạng thái trước lần ghi gần nhất.
+- `.local/workspace.v1.json`: file của bản 1.x, giữ nguyên sau khi tự chuyển đổi ở lần chạy đầu của bản 2.
+  Bản 2 không còn ý tưởng, ảnh/ghi âm đính kèm, màu tag, trình chạy audit AI và trình soạn design document dạng cây;
+  ghi chú task thành mô tả, tên tag thành nhãn, design document thành Ghi chú của dự án.
+- `.local/` được gitignore và không bao giờ được phục vụ qua HTTP. Sao lưu cả thư mục trước khi cập nhật.
 
 ## Kiểm tra
 
@@ -94,36 +100,11 @@ npm test
 npm run build
 ```
 
-Tests kiểm tra API HTTP thật, token/origin, task tree, progress, lease tranh chấp, revision, retry idempotent, đồng bộ người/agent, lưu đĩa và template. Không tự push hoặc publish.
+Test chạy server HTTP thật trên thư mục tạm: token và origin, vòng đời một việc, bằng chứng bắt buộc, quyền giữa các
+agent, hộp thư, ghi đồng thời, luồng sự kiện, CLI, chuyển đổi dữ liệu bản 1.
 
-## Cài skill cho agent
+## Skill cho agent
 
-Skill phát hành: **nhanh-project-tracking**, nằm trong `skills/nhanh-project-tracking`.
-
-Từ source repository, cài vào Codex:
-
-```sh
-node scripts/install-skill.mjs
-```
-
-Mặc định dùng `$CODEX_HOME/skills` hoặc `~/.codex/skills`. Chỉ định thư mục skill khác bằng `--target <skills-directory>`. Installer không ghi đè skill đã có; xem và di chuyển bản cũ trước khi nâng cấp. Mở phiên agent mới để skill được phát hiện.
-
-Hoặc tải `nhanh-project-tracking-v1.2.0.zip` từ [GitHub Releases](https://github.com/voilenmang12/project-task-tracking/releases), kiểm tra hash bằng `SHA256SUMS.txt`, rồi giải nén thư mục `nhanh-project-tracking` vào thư mục skills. Không cần clone repo chỉ để sử dụng client; server Nhánh vẫn cần chạy trên cùng máy.
-
-Codex: gọi `$nhanh-project-tracking`, cung cấp projectId của dự án cần làm. Với agy, yêu cầu đọc file `SKILL.md` theo đường dẫn đã giải nén nếu môi trường không tự khám phá skill. Gói không tự sửa cấu hình của agy hoặc khởi động server. Trong hướng dẫn của mỗi repo, lưu projectId, URL localhost và actor để agent kết nối đúng dự án.
-
-Ví dụ yêu cầu:
-
-```text
-Dùng skill nhanh-project-tracking. Project ID: <id thực tế>, actor: codex-my-game.
-Đọc design document, nhận task tiếp theo, triển khai trong repo này,
-chạy test và cập nhật tiến độ có bằng chứng lên Nhánh.
-```
-
-Gói gồm SKILL.md, metadata Codex, CLI Node.js không cần thư viện ngoài và tài liệu kết nối/call. Không chứa dữ liệu dự án, token, dependency hay file build. Người dùng còn có thể gọi CLI trực tiếp từ thư mục skill.
-
-Đóng gói lại: `python scripts/package-skill.py`; artifact được tạo trong `.local/releases/<version>/` và không đưa vào Git.
-
-Design document dùng [chuẩn viết chung](skills/nhanh-project-tracking/references/document-standard.md): mục lục cây theo heading Markdown, chọn mục để soạn thảo và preview song song ngay cạnh nhau. Có thêm mục con, thu/mở nhánh và xem toàn bộ tài liệu. Tài liệu mới có khung chuẩn; tài liệu cũ được giữ nguyên, có thể bổ sung mục chuẩn còn thiếu trước khi lưu.
-
-Mỗi nhánh lớn của document xuất thành một file Markdown riêng trong documents/, có index.json ánh xạ ID/tiêu đề/cấu trúc. UI cho thêm nhánh lớn, mục con, mục cùng cấp; sửa tiêu đề/nội dung; Tab/Shift+Tab đổi cấp; xóa nhánh có hoàn tác. design.md là bản tổng hợp. Agent sửa mục qua documents.section.create/update/move/delete để giữ ID ổn định.
+`skills/nhanh-project-tracking` là skill phát hành kèm CLI. Cài cho Claude Code:
+`node scripts/install-skill.mjs --target ~/.claude/skills`; cho Codex: `node scripts/install-skill.mjs`. Trình cài
+không ghi đè bản đã có: dời bản cũ đi trước khi nâng cấp. Đóng gói: `python scripts/package-skill.py`.

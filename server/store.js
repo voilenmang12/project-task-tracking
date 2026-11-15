@@ -1,25 +1,68 @@
+// The workspace on disk: one JSON file, written atomically, one writer at a time.
+//   <root>/workspace.json          the data (version 2)
+//   <root>/workspace.backup.json   the state before the last write
+//   <root>/workspace.v1.json       the untouched file of tracker v1, kept after the migration
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import {createHash,randomUUID} from 'node:crypto';
-import {validateData} from '../src/model.js';
-import {parseDocumentSections,renderDocumentBranch,renderDocument} from '../src/document.js';
-export const folderId=id=>createHash('sha256').update(id).digest('hex').slice(0,24);
-export async function atomicWrite(file,text){await fs.mkdir(path.dirname(file),{recursive:true});const temp=file+'.'+randomUUID()+'.tmp';await fs.writeFile(temp,text,'utf8');await fs.rename(temp,file);}
-export function createStore(root){
-  const file=path.join(root,'workspace.json');let queue=Promise.resolve();
-  async function read(){try{const record=JSON.parse(await fs.readFile(file,'utf8'));validateData(record.data);return record;}catch(e){if(e.code==='ENOENT')return {revision:0,data:null};throw Error('Không đọc được workspace.json. Dữ liệu không bị ghi đè; kiểm tra backup.');}}
-  async function transact(change,revision){const operation=queue.catch(()=>{}).then(async()=>{const previous=await read();if(revision!==undefined&&previous.revision!==revision){const error=Error('Dữ liệu đã đổi. Đọc lại trước khi thử lại.');error.status=409;throw error;}let data=await change(previous.data,previous);validateData(data);data={...data,projects:data.projects.map(p=>p.documentSections?{...p,designDocument:renderDocument(p,p.documentSections)}:p)};validateData(data);
-    if(previous.data)await atomicWrite(path.join(root,'workspace.backup.json'),JSON.stringify(previous,null,2));
-    const record={revision:previous.revision+1,data};
-    // Project exports are reproducible from workspace.json; keep deleted project folders for recovery.
-    for(const project of data.projects){const dir=path.join(root,'projects',folderId(project.id));await atomicWrite(path.join(dir,'design.md'),project.designDocument||'');await atomicWrite(path.join(dir,'project.json'),JSON.stringify(project,null,2));await atomicWrite(path.join(dir,'tasks.json'),JSON.stringify(data.tasks.filter(t=>t.projectId===project.id),null,2));
-      const nodes=project.documentSections??parseDocumentSections(project.designDocument||'');const branches=nodes.filter(n=>n.parentId===null).sort((a,b)=>a.order-b.order).map(n=>({id:n.id,title:n.title,file:folderId(n.id)+'.md'}));
-      const docs=path.join(dir,'documents');for(const branch of branches)await atomicWrite(path.join(docs,branch.file),renderDocumentBranch(nodes,branch.id));
-      await atomicWrite(path.join(docs,'index.json'),JSON.stringify({branches,sections:nodes.map(({content,...node})=>node)},null,2));
-      for(const name of await fs.readdir(docs)){if(/^[a-f0-9]{24}\.md$/.test(name)&&!branches.some(b=>b.file===name)){await fs.mkdir(path.join(docs,'archive'),{recursive:true});await fs.rename(path.join(docs,name),path.join(docs,'archive',Date.now()+'-'+name));}}
+import { randomUUID } from 'node:crypto';
+import { emptyWorkspace, validateWorkspace } from '../shared/model.js';
+import { migrateV1 } from './migrate.js';
+
+async function atomicWrite(file, text) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const temp = `${file}.${randomUUID()}.tmp`;
+  await fs.writeFile(temp, text, 'utf8');
+  await fs.rename(temp, file);
+}
+
+export function createStore(root) {
+  const file = path.join(root, 'workspace.json');
+  let cache = null;
+  let queue = Promise.resolve();
+
+  async function load() {
+    if (cache) return cache;
+    let raw;
+    try {
+      raw = JSON.parse(await fs.readFile(file, 'utf8'));
+    } catch (e) {
+      if (e.code === 'ENOENT') return (cache = emptyWorkspace());
+      throw Error(`Cannot read ${file}: ${e.message}. Nothing was overwritten; restore workspace.backup.json if needed.`);
     }
-    await atomicWrite(file,JSON.stringify(record,null,2));return record;
-  });queue=operation;return operation;}
-  const write=(data,revision)=>transact(()=>data,revision);
-  return {root,read,write,transact};
+    if (raw.version === 2) return (cache = validateWorkspace(raw));
+    // Tracker v1 wrote {revision, data: {version: 1, ...}}. Keep that file and convert it once.
+    if (raw.data?.version === 1) {
+      const kept = path.join(root, 'workspace.v1.json');
+      try { await fs.access(kept); } catch { await fs.copyFile(file, kept); }
+      cache = validateWorkspace(migrateV1(raw.data));
+      await atomicWrite(file, JSON.stringify(cache, null, 2));
+      return cache;
+    }
+    throw Error(`${file} is not a tracker workspace (version ${raw.version ?? raw.data?.version}).`);
+  }
+
+  /** A deep copy for readers; they cannot corrupt the cache. */
+  const read = async () => structuredClone(await load());
+
+  /**
+   * Run `change(draft)` on a copy and save it when it reports a change. Changes run one after the other, so two
+   * agents writing at once never lose each other's work.
+   */
+  function transact(change) {
+    const run = queue.catch(() => {}).then(async () => {
+      const current = await load();
+      const draft = structuredClone(current);
+      const { result, changed } = await change(draft);
+      if (!changed) return { result, changed: false, seq: current.seq };
+      validateWorkspace(draft);
+      await atomicWrite(path.join(root, 'workspace.backup.json'), JSON.stringify(current, null, 2));
+      await atomicWrite(file, JSON.stringify(draft, null, 2));
+      cache = draft;
+      return { result, changed: true, seq: draft.seq };
+    });
+    queue = run;
+    return run;
+  }
+
+  return { root, read, transact };
 }

@@ -1,11 +1,17 @@
 # Project instructions
 
-This repository is a local API and human UI for shared project/task tracking.
+This repository is the Nhanh tracker: a local API, a CLI and a web UI where one person follows the work of
+autonomous agents (plan, progress, proof, what waits for the user).
 
-- Read `docs/AGENT_WORKFLOW.md` before using the tracker to manage project work.
-- Run `npm test` and `npm run build` for changes affecting the service/UI.
-- Preserve existing `.local` user data. Do not commit private data, API keys, tokens or audit outputs.
-- Do not deploy to cloud hosting. Use `npm start` (API + built UI), or `npm run dev` for development.
-- Gemini/Google API keys may only be used for TTS. Use agy or explicitly authorized Codex CLI for non-TTS AI; never fall back to Gemini API.
-- No chat or AI audit controls in the UI. Audit project/document/task work in the agent workflow using `skills/nhanh-project-tracking/references/audit-rules.md`.
-- External agents should update through the documented API/CLI, not by editing storage files.
+- `shared/model.js` is the data model (pure functions, used by the server and the UI). `server/actions.js` holds
+  every action; nothing else changes the data. `src/` is the web UI (React, Vite). The CLI lives in
+  `skills/nhanh-project-tracking/scripts/nhanh.mjs` so the skill works on its own.
+- A new behaviour is an action with a description an agent can act on, a test in `tests/`, and a line in the
+  skill's `SKILL.md` or `references/rules.md` when agents must know about it.
+- Run `npm test` and `npm run build` before each merge. Code is written to be read: no dense one-liners.
+- Keep the user's data: `.local/` is never committed and never edited by hand; a change of the stored format
+  needs a migration in `server/migrate.js` with a test, and keeps the old file.
+- The service is loopback only. Never deploy it or expose it on a network.
+- The UI is for the person: it has no AI controls and runs no agent. Its wording is Vietnamese; code, comments
+  and the skill are English.
+- Agents using the tracker for another project follow the skill, not this file.

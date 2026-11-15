@@ -1,28 +1,25 @@
-# Connecting to the local service
+# Connecting to the tracker
 
-The client in this skill is portable: it only needs Node.js and a running Nhánh service on the same machine. It does not depend on where the tracker source repository is installed.
+The client in this skill needs only Node.js and a tracker running on the same machine. It does not depend on where
+the tracker's repository is.
 
-Check `GET http://127.0.0.1:5173/api/health`; expect `service: nhanh-local`. If another service owns that port, do not send project data to it. Use the configured NHANH_URL instead.
+- Check: `GET http://127.0.0.1:5173/api/health` answers `{"ok":true,"service":"nhanh-local","apiVersion":2}`.
+  Another service on that port: send nothing to it; use the `NHANH_URL` the project names.
+- `apiVersion` 1: the server is the old version; this skill (2.x) does not work with it. Update the server.
+- Not running: the tracker is optional. Carry on with the work, do not track this session, and say in your
+  closing message that the tracker did not answer. Start it only when the project's instructions say how and that
+  you may (for example a setup script of the workspace). In its repository that is `npm ci`, `npm run build`,
+  `npm start`.
+- One server per data folder. Never start a second one, never point a new server at an empty folder to get
+  around a lock, never edit `.local/` files: all changes go through the actions.
+- An agent running in a container or on another machine cannot reach the host's loopback address.
 
-If Nhánh is stopped and its repository location is known, start it from that repository:
+Settings: `PORT` and `NHANH_DATA_DIR` for the server; `NHANH_URL` and `NHANH_ACTOR` for the client.
 
-```sh
-npm ci
-npm run build
-npm start
+A repository binds itself to a project in its own instructions or config, for example:
+
+```yaml
+tracker:
+  project_id: "cg01-mortalbound"
+  actor: "claude-cg01"
 ```
-
-Keep the process running. If already installed and built, only `npm start` is needed. Do not start a second server on the same data directory. For a new install use the source release at https://github.com/voilenmang12/project-task-tracking, install dependencies and build locally. Do not clone/install elsewhere unless that setup is part of the user's task.
-
-Server configuration: `PORT` changes the port; `NHANH_DATA_DIR` changes the private data directory. Client configuration: `NHANH_URL` changes the HTTP localhost endpoint. Keep them consistent. Do not create a new empty data directory to get around a data lock.
-
-A repository may record the project binding in its agent instructions:
-
-```text
-Use the nhanh-project-tracking skill.
-Nhánh URL: http://127.0.0.1:5173
-Nhánh projectId: the-actual-project-id
-Actor: codex-product
-```
-
-For agy or another agent that does not discover the installed skill automatically, ask it to read the absolute path to SKILL.md and follow it. No claim is made that an arbitrary agent's skill discovery path is configured by installing this folder.
