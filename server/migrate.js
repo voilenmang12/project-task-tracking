@@ -3,6 +3,12 @@
 // the tag colours, claims and the v1 audit runs.
 import { emptyWorkspace } from '../shared/model.js';
 
+/** Tracker 2.0 data has no flows (2.2.0). Adds the empty list; nothing else changes. Returns null when not needed. */
+export function addFlows(w) {
+  if (Array.isArray(w.flows)) return null;
+  return { ...w, flows: [] };
+}
+
 export function migrateV1(v1) {
   const w = emptyWorkspace();
   const tagName = new Map([...(v1.tagCatalog || []), ...(v1.customTags || [])].map((t) => [t.id, t.name]));

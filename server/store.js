@@ -2,11 +2,12 @@
 //   <root>/workspace.json          the data (version 2)
 //   <root>/workspace.backup.json   the state before the last write
 //   <root>/workspace.v1.json       the untouched file of tracker v1, kept after the migration
+//   <root>/workspace.v2.0.json     the untouched file of tracker 2.0/2.1, kept when flows were added (2.2.0)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { emptyWorkspace, validateWorkspace } from '../shared/model.js';
-import { migrateV1 } from './migrate.js';
+import { addFlows, migrateV1 } from './migrate.js';
 
 async function atomicWrite(file, text) {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -29,7 +30,15 @@ export function createStore(root) {
       if (e.code === 'ENOENT') return (cache = emptyWorkspace());
       throw Error(`Cannot read ${file}: ${e.message}. Nothing was overwritten; restore workspace.backup.json if needed.`);
     }
-    if (raw.version === 2) return (cache = validateWorkspace(raw));
+    if (raw.version === 2) {
+      const upgraded = addFlows(raw);
+      if (!upgraded) return (cache = validateWorkspace(raw));
+      const kept = path.join(root, 'workspace.v2.0.json');
+      try { await fs.access(kept); } catch { await fs.copyFile(file, kept); }
+      cache = validateWorkspace(upgraded);
+      await atomicWrite(file, JSON.stringify(cache, null, 2));
+      return cache;
+    }
     // Tracker v1 wrote {revision, data: {version: 1, ...}}. Keep that file and convert it once.
     if (raw.data?.version === 1) {
       const kept = path.join(root, 'workspace.v1.json');

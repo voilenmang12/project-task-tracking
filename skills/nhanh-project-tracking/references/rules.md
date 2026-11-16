@@ -69,6 +69,12 @@ is a proposal: the digest lists it under `AWAITING REVIEW` and `task.start` refu
 approves it in the web UI. The user may edit, reorder or drop proposals first; read the digest again before you
 start. A dropped proposal carries the user's reason: do not propose the same thing again without new facts.
 
+**Order arrows.** An item may run `after` other items (tasks or whole groups), set by the user on the Luồng board
+or in the item panel. `task.start` refuses an item whose predecessors are not finished (409). When your plan
+has a real order that the tree does not show (the build needs the art set, the store page needs the build), set it
+with `task.update taskId=<later> --json '{"after":["<earlier>"]}'`; never add arrows only to sequence your own
+convenience, and never remove the user's.
+
 ## 3. Work added on the way
 
 The plan is the user's picture of the scope. Changing it silently makes the progress number a lie, so every

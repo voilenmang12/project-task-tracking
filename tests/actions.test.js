@@ -1,7 +1,7 @@
 // The rules of the actions, run on a workspace in memory.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyWorkspace, nextTasks, projectSummary, rollup, validateWorkspace } from '../shared/model.js';
+import { emptyWorkspace, nextTasks, projectSummary, rollup, validateWorkspace, waitingOn } from '../shared/model.js';
 import { runAction } from '../server/actions.js';
 import { migrateV1 } from '../server/migrate.js';
 
@@ -228,4 +228,83 @@ test('a project created with review on, and review off by default', () => {
   assert.equal(run('project.create', { id: 'b', title: 'B', review: true }, USER).review, true);
   run('task.add', { projectId: 'a', title: 'Free', reason: 'r' });
   assert.equal(w.tasks[0].review, null);
+});
+
+test('order arrows: a task waits for all its predecessors, or any one; groups count as a whole', () => {
+  const { w, run } = workspace();
+  const byId = (id) => w.tasks.find((t) => t.id === id);
+  // hub (in m2) runs after movement and combat (in m1, another branch of the tree).
+  run('task.update', { taskId: 'hub', after: ['move', 'combat'] }, USER);
+  assert.deepEqual(waitingOn(w.tasks, byId('hub')).sort(), ['combat', 'move']);
+  assert.ok(!nextTasks(w, 'g').some((t) => t.id === 'hub'));
+  rejects(() => run('task.start', { taskId: 'hub' }), /runs after/, 409);
+
+  run('task.update', { taskId: 'hub', afterMode: 'any' }, USER);
+  run('task.start', { taskId: 'move' });
+  run('task.done', { taskId: 'move', summary: 'ok', check: 'all', evidence: { commit: 'a' } });
+  assert.deepEqual(waitingOn(w.tasks, byId('hub')), [], 'any one is enough');
+
+  // An arrow from a group: everything under m2 waits until m1 is finished. A dropped task does not hold it up.
+  run('task.update', { taskId: 'hub', after: [], afterMode: 'all' }, USER);
+  run('task.update', { taskId: 'm2', after: ['m1'] }, USER);
+  assert.deepEqual(waitingOn(w.tasks, byId('hub')), ['m1']);
+  run('task.drop', { taskId: 'combat', reason: 'cut' }, USER);
+  assert.deepEqual(waitingOn(w.tasks, byId('hub')), []);
+  validateWorkspace(w);
+});
+
+test('order arrows that can never be met are refused', () => {
+  const { run } = workspace();
+  run('task.update', { taskId: 'combat', after: ['move'] }, USER);
+  rejects(() => run('task.update', { taskId: 'move', after: ['combat'] }, USER), /loop/, 409);
+  rejects(() => run('task.update', { taskId: 'move', after: ['m1'] }, USER), /loop/, 409); // its own group
+  rejects(() => run('task.update', { taskId: 'm1', after: ['move'] }, USER), /loop/, 409); // a task inside it
+  rejects(() => run('task.update', { taskId: 'move', after: ['move'] }, USER), /other items/);
+});
+
+test('a flow runs its nodes in arrow order for its actor; other agents leave its tasks alone', () => {
+  const { w, run } = workspace();
+  const f = run('flow.create', { projectId: 'g', title: 'Setup' }, USER);
+  run('flow.update', { flowId: f.id, nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'combat', x: 300, y: 0 }, { taskId: 'move', x: 300, y: 200 }] }, USER);
+  run('task.update', { taskId: 'combat', after: ['hub'] }, USER);
+  run('task.update', { taskId: 'move', after: ['combat'] }, USER);
+  run('flow.update', { flowId: f.id, assignee: 'claude-a', status: 'running' }, USER);
+
+  let mine = run('digest', { projectId: 'g' }, AGENT).flows[0];
+  assert.deepEqual([mine.mine, mine.done, mine.total], [true, 0, 3]);
+  assert.deepEqual(mine.next.map((t) => t.id), ['hub']);
+  assert.deepEqual(mine.waiting.map((t) => t.id), ['combat', 'move']);
+  // Another agent sees the flow as not its own, and its tasks are not offered to it.
+  const other = run('digest', { projectId: 'g' }, OTHER);
+  assert.equal(other.flows[0].mine, false);
+  assert.ok(!other.next.some((t) => ['hub', 'combat', 'move'].includes(t.id)));
+
+  run('task.start', { taskId: 'hub' });
+  run('task.done', { taskId: 'hub', summary: 'Hub shows' });
+  mine = run('digest', { projectId: 'g' }, AGENT).flows[0];
+  assert.deepEqual(mine.next.map((t) => t.id), ['combat']);
+  for (const id of ['combat', 'move']) {
+    run('task.start', { taskId: id });
+    run('task.done', { taskId: id, summary: 'ok', check: 'all', evidence: { commit: id } });
+  }
+  const view = run('project.get', { projectId: 'g' }).flows[0];
+  assert.deepEqual([view.state, view.done, view.total], ['done', 3, 3]);
+
+  // A deleted task leaves the flow and the arrows; only the user deletes a flow.
+  run('task.delete', { taskId: 'combat' }, USER);
+  assert.equal(w.flows[0].nodes.length, 2);
+  assert.deepEqual(w.tasks.find((t) => t.id === 'move').after, []);
+  rejects(() => run('flow.delete', { flowId: f.id }), /only the user/, 403);
+  run('flow.delete', { flowId: f.id }, USER);
+  assert.equal(w.flows.length, 0);
+  validateWorkspace(w);
+});
+
+test('a group node covers the tasks inside it', () => {
+  const { run } = workspace();
+  const f = run('flow.create', { projectId: 'g', id: 'f1', title: 'All of M1' }, USER);
+  run('flow.update', { flowId: f.id, nodes: [{ taskId: 'm1', x: 0, y: 0 }], status: 'running' }, USER);
+  const d = run('digest', { projectId: 'g' }).flows[0];
+  assert.equal(d.total, 2);
+  assert.deepEqual(d.next.map((t) => t.id), ['move', 'combat']);
 });

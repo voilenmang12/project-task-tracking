@@ -124,6 +124,22 @@ test('a v1 data folder is converted on first read and the old file is kept', asy
   }
 });
 
+test('2.0 data gets an empty flow list on first read, and the old file is kept', async () => {
+  const root = await tempDir();
+  const old = { version: 2, seq: 0, projects: [{ id: 'p', title: 'P' }], tasks: [], events: [], receipts: [] };
+  await fs.writeFile(path.join(root, 'workspace.json'), JSON.stringify(old));
+  const { stop, service } = await start(root);
+  try {
+    const { result } = await service.call('project.get', { projectId: 'p' });
+    assert.deepEqual(result.flows, []);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'workspace.v2.0.json'), 'utf8')), old);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'workspace.json'), 'utf8')).flows, []);
+  } finally {
+    await stop();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('one server per data folder', async () => {
   const root = await tempDir();
   const release = await acquireLock(root);

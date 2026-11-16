@@ -9,12 +9,14 @@ export const SIZES = ['S', 'M', 'L'];
 export const KINDS = ['group', 'task'];
 export const ORIGINS = ['plan', 'user', 'agent'];
 export const HUMAN = 'human';
+export const FLOW_STATUSES = ['draft', 'running', 'paused'];
+export const AFTER_MODES = ['all', 'any'];
 
 // Relative weight of a task in progress numbers. An unsized task counts as M.
 const WEIGHT = { S: 1, M: 3, L: 8 };
 export const weightOf = (task) => WEIGHT[task.size] ?? WEIGHT.M;
 
-export const emptyWorkspace = () => ({ version: 2, seq: 0, projects: [], tasks: [], events: [], receipts: [] });
+export const emptyWorkspace = () => ({ version: 2, seq: 0, projects: [], tasks: [], flows: [], events: [], receipts: [] });
 
 export function childrenOf(tasks, parentId, projectId) {
   return tasks
@@ -35,6 +37,59 @@ export function descendantIds(tasks, id) {
     }
   }
   return found;
+}
+
+const ancestorsOf = (tasks, task) => {
+  const out = [];
+  for (let p = tasks.find((t) => t.id === task.parentId); p; p = tasks.find((t) => t.id === p.parentId)) out.push(p);
+  return out;
+};
+
+/** True when an item no longer holds anything up: a done or dropped task, or a group whose tasks all are. */
+export function finished(tasks, item) {
+  if (!item || item.status === 'dropped') return true;
+  if (item.kind === 'task' && item.status !== 'done') return false;
+  const below = descendantIds(tasks, item.id);
+  return tasks.every((t) => !below.has(t.id) || t.kind !== 'task' || t.status === 'done' || t.status === 'dropped');
+}
+
+/**
+ * The predecessors an item still waits for ("after" arrows), its own and those of the groups above it.
+ * mode "all": every predecessor must be finished; "any": one is enough. [] when it may start.
+ */
+export function waitingOn(tasks, task) {
+  const out = [];
+  for (const holder of [task, ...ancestorsOf(tasks, task)]) {
+    const after = (holder.after || []).map((id) => tasks.find((t) => t.id === id)).filter(Boolean);
+    if (!after.length) continue;
+    const open = after.filter((p) => !finished(tasks, p));
+    if (holder.afterMode === 'any' ? open.length === after.length : open.length) out.push(...open.map((p) => p.id));
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * True when the "after" arrows of a project can never all be met: an item that, through its arrows, the arrows of
+ * the groups above it and the items a group holds, ends up waiting for itself.
+ */
+export function hasDeadlock(tasks) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const requires = (t) => {
+    const out = [...(t.after || [])];
+    for (const a of ancestorsOf(tasks, t)) out.push(...(a.after || []));
+    for (const c of tasks) if (c.parentId === t.id) out.push(c.id);
+    return out.filter((id) => byId.has(id));
+  };
+  const state = new Map(); // 1 = on the path, 2 = done
+  const visit = (id) => {
+    if (state.get(id) === 1) return true;
+    if (state.get(id) === 2) return false;
+    state.set(id, 1);
+    for (const next of requires(byId.get(id))) if (visit(next)) return true;
+    state.set(id, 2);
+    return false;
+  };
+  return tasks.some((t) => visit(t.id));
 }
 
 /** True when an agent proposed the item and the user has not approved it yet. Agents do not start it meanwhile. */
@@ -129,8 +184,11 @@ export function projectSummary(workspace, projectId) {
   };
 }
 
-/** The next tasks an agent should take: open, unowned leaves in tree order, user requests first. */
-export function nextTasks(workspace, projectId, limit = 5) {
+/**
+ * The next tasks an agent should take: open, unowned leaves in tree order, user requests first. Leaves out what
+ * still waits for its predecessors, and what a running flow has given to another actor.
+ */
+export function nextTasks(workspace, projectId, limit = 5, actor = null) {
   const tasks = workspace.tasks.filter((t) => t.projectId === projectId);
   const ordered = [];
   const walk = (parentId) => {
@@ -146,7 +204,9 @@ export function nextTasks(workspace, projectId, limit = 5) {
     for (let p = t; p; p = tasks.find((x) => x.id === p.parentId)) if (pendingIds.has(p.id)) return true;
     return false;
   };
-  const open = ordered.filter((t) => t.kind === 'task' && t.status === 'todo' && !hasOpenChild(t) && !underReview(t));
+  const reserved = reservedByFlows(workspace, projectId, actor);
+  const open = ordered.filter((t) => t.kind === 'task' && t.status === 'todo' && !hasOpenChild(t) && !underReview(t) &&
+    !waitingOn(tasks, t).length && !reserved.has(t.id));
   return [...open.filter((t) => t.origin === 'user'), ...open.filter((t) => t.origin !== 'user')].slice(0, limit);
 }
 
@@ -158,7 +218,7 @@ export function validateWorkspace(w) {
     throw Error(`Invalid workspace: ${why}`);
   };
   if (!w || w.version !== 2) bad('version');
-  for (const key of ['projects', 'tasks', 'events', 'receipts']) if (!Array.isArray(w[key])) bad(key);
+  for (const key of ['projects', 'tasks', 'flows', 'events', 'receipts']) if (!Array.isArray(w[key])) bad(key);
   const projects = new Set();
   for (const p of w.projects) {
     if (!isText(p.id, 100) || !p.id || projects.has(p.id) || !isText(p.title, 200) || !p.title.trim()) bad(`project ${p?.id}`);
@@ -175,6 +235,8 @@ export function validateWorkspace(w) {
     byId.set(t.id, t);
   }
   for (const t of w.tasks) {
+    if (t.after !== undefined && (!Array.isArray(t.after) || t.after.some((id) => byId.get(id)?.projectId !== t.projectId || id === t.id))) bad(`task ${t.id}: after`);
+    if (t.afterMode !== undefined && !AFTER_MODES.includes(t.afterMode)) bad(`task ${t.id}: afterMode`);
     const seen = new Set([t.id]);
     let p = t;
     while (p.parentId !== null) {
@@ -184,5 +246,77 @@ export function validateWorkspace(w) {
       p = parent;
     }
   }
+  const flows = new Set();
+  for (const f of w.flows) {
+    if (!isText(f.id, 100) || !f.id || flows.has(f.id) || !projects.has(f.projectId) || !isText(f.title, 200)) bad(`flow ${f?.id}`);
+    if (!FLOW_STATUSES.includes(f.status) || !Array.isArray(f.nodes)) bad(`flow ${f.id}: status/nodes`);
+    if (f.nodes.some((n) => byId.get(n.taskId)?.projectId !== f.projectId || !Number.isFinite(n.x) || !Number.isFinite(n.y))) bad(`flow ${f.id}: nodes`);
+    flows.add(f.id);
+  }
   return w;
+}
+
+// ---- flows ------------------------------------------------------------------------------------------------------
+// A flow is a canvas of items (tasks or whole groups) joined by "after" arrows, that the user hands to one agent to
+// run in order. The arrows belong to the items, so they hold everywhere; the flow adds the place of each node, the
+// actor it is given to and whether it runs.
+
+/** The leaf tasks a flow covers, in run order: nodes sorted by their arrows, then top to bottom, left to right. */
+export function flowTasks(workspace, flow) {
+  const tasks = workspace.tasks.filter((t) => t.projectId === flow.projectId);
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const nodes = flow.nodes.filter((n) => byId.has(n.taskId));
+  const inFlow = new Set(nodes.map((n) => n.taskId));
+  const before = new Map(nodes.map((n) => [n.taskId, (byId.get(n.taskId).after || []).filter((id) => inFlow.has(id))]));
+  const placed = new Set();
+  const order = [];
+  const byPlace = (a, b) => a.y - b.y || a.x - b.x;
+  while (order.length < nodes.length) {
+    const ready = nodes.filter((n) => !placed.has(n.taskId) && before.get(n.taskId).every((id) => placed.has(id))).sort(byPlace);
+    const next = ready[0] || nodes.filter((n) => !placed.has(n.taskId)).sort(byPlace)[0]; // a loop cannot be saved, but never hangs
+    placed.add(next.taskId);
+    order.push(next.taskId);
+  }
+  const leaves = [];
+  const seen = new Set();
+  const addLeaves = (t) => {
+    const kids = childrenOf(tasks, t.id);
+    if (t.kind === 'task' && !kids.length) {
+      if (!seen.has(t.id)) { seen.add(t.id); leaves.push(t); }
+      return;
+    }
+    kids.forEach(addLeaves);
+    if (t.kind === 'task' && !seen.has(t.id)) { seen.add(t.id); leaves.push(t); } // a parent task closes after its sub-tasks
+  };
+  for (const id of order) addLeaves(byId.get(id));
+  return leaves;
+}
+
+/** A flow with its numbers: the derived status, progress, and the queue an agent works from. */
+export function flowState(workspace, flow) {
+  const tasks = workspace.tasks.filter((t) => t.projectId === flow.projectId);
+  const all = flowTasks(workspace, flow);
+  const live = all.filter((t) => t.status !== 'dropped');
+  const done = live.filter((t) => t.status === 'done');
+  const open = live.filter((t) => t.status !== 'done');
+  const hasOpenChild = (t) => tasks.some((c) => c.parentId === t.id && c.status !== 'done' && c.status !== 'dropped');
+  const runnable = (t) => t.status === 'todo' && !hasOpenChild(t) && !awaitingReview(t) && !waitingOn(tasks, t).length;
+  return {
+    status: live.length && !open.length ? 'done' : flow.status,
+    total: live.length,
+    done: done.length,
+    next: open.filter(runnable),
+    doing: open.filter((t) => t.status === 'doing' || t.status === 'blocked'),
+    waiting: open.filter((t) => t.status === 'todo' && !runnable(t)).map((t) => ({ task: t, waitingOn: waitingOn(tasks, t) })),
+  };
+}
+
+/** Task ids that a running flow keeps for its own actor, so other agents leave them alone. */
+export function reservedByFlows(workspace, projectId, actor) {
+  const out = new Set();
+  for (const f of workspace.flows || []) {
+    if (f.projectId !== projectId || f.status !== 'running' || !f.assignee || f.assignee === actor) continue;
+    for (const t of flowTasks(workspace, f)) out.add(t.id);
+  }
+  return out;
 }
