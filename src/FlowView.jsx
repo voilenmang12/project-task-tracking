@@ -1,12 +1,12 @@
-// "Luồng": canvases where the user lays out tasks and groups as nodes, draws order arrows between them and hands the
+// "Luồng": boards where the user lays out tasks and groups as nodes (dragged from the plan tree beside it), draws order arrows between them and hands the
 // flow to one agent to run in order. The arrows are the items' own "after" lists, so they hold everywhere; the flow
 // keeps the place of each node, the actor and whether it runs.
 import React from 'react';
-import { Flag, LayoutGrid, Pause, Play, Plus, Search, Trash2, X } from 'lucide-react';
+import { Flag, LayoutGrid, Pause, Pencil, Play, Plus, Trash2, X } from 'lucide-react';
 import { call } from './api.js';
 import { childrenOf } from '../shared/model.js';
 import { askText, confirmAction } from './Dialog.jsx';
-import { Bar, Editable, StatusIcon, actorName, pct } from './ui.jsx';
+import { Bar, StatusIcon, actorName, pct } from './ui.jsx';
 
 const W = 220; // node size; the arrows attach at the middle of the left and right edges
 const H = 84;
@@ -18,38 +18,27 @@ const isFinished = (tasks, item) => {
   return item.rollup?.status === 'done' || childrenOf(tasks, item.id).every((c) => isFinished(tasks, c));
 };
 
-export default function FlowView({ projectId, tasks, flows, events, selectedTaskId, onOpenTask, onError }) {
-  const [flowId, setFlowId] = React.useState(() => flows[0]?.id || null);
-  const flow = flows.find((f) => f.id === flowId) || flows[0] || null;
-
+export default function FlowView({ projectId, tasks, flows, flow, onSelectFlow, events, selectedTaskId, onOpenTask, onError }) {
   const newFlow = async () => {
     const title = await askText({ title: 'Luồng mới', label: 'Tên luồng', placeholder: 'Setup dự án', required: true, confirmLabel: 'Tạo' });
-    if (title) call('flow.create', { projectId, title }).then((f) => setFlowId(f.id)).catch(onError);
+    if (title) call('flow.create', { projectId, title }).then((f) => onSelectFlow(f.id)).catch(onError);
   };
-
+  if (!flow) {
+    return (
+      <div className="empty">
+        <p><strong>Chưa có luồng nào.</strong></p>
+        <p className="muted">Luồng là một bảng: kéo việc từ cây bên trái vào, nối mũi tên "xong cái này mới đến cái kia", rồi giao cho một agent chạy lần lượt.</p>
+        <button className="btn btn-primary" onClick={newFlow}><Plus size={14} /> Tạo luồng đầu tiên</button>
+      </div>
+    );
+  }
   return (
-    <div className="flows">
-      <aside className="flow-list">
-        <button className="btn btn-primary flow-new" onClick={newFlow}><Plus size={14} /> Luồng mới</button>
-        {flows.map((f) => (
-          <button key={f.id} className={`flow-item ${flow?.id === f.id ? 'on' : ''}`} onClick={() => setFlowId(f.id)}>
-            <span className="flow-item-title ellipsis">{f.title}</span>
-            <span className="flow-item-meta">
-              <span className={`chip chip-flow-${f.state}`}>{STATE_LABEL[f.state]}</span>
-              <span className="muted small">{f.done}/{f.total}{f.assignee ? ` · ${f.assignee}` : ''}</span>
-            </span>
-          </button>
-        ))}
-        {!flows.length && <p className="muted small">Luồng là một bảng: kéo việc vào, nối mũi tên "xong cái này mới đến cái kia", rồi giao cho một agent chạy lần lượt.</p>}
-      </aside>
-      {flow
-        ? <FlowCanvas key={flow.id} flow={flow} tasks={tasks} events={events} selectedTaskId={selectedTaskId} onOpenTask={onOpenTask} onError={onError} />
-        : <div className="empty grow"><p>Chưa có luồng nào.</p><button className="btn btn-primary" onClick={newFlow}><Plus size={14} /> Tạo luồng đầu tiên</button></div>}
-    </div>
+    <FlowCanvas key={flow.id} flow={flow} flows={flows} onSelectFlow={onSelectFlow} onNewFlow={newFlow} tasks={tasks} events={events}
+      selectedTaskId={selectedTaskId} onOpenTask={onOpenTask} onError={onError} />
   );
 }
 
-function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }) {
+function FlowCanvas({ flow, flows, onSelectFlow, onNewFlow, tasks, events, selectedTaskId, onOpenTask, onError }) {
   const byId = React.useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const [nodes, setNodes] = React.useState(flow.nodes);
   // The node being dragged lives in a ref: pointer events can come faster than React renders.
@@ -57,8 +46,14 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
   const [movingId, setMovingId] = React.useState(null);
   const [linking, setLinking] = React.useState(null); // {from, x, y}
   const [edge, setEdge] = React.useState(null); // selected arrow {from, to}
-  const [query, setQuery] = React.useState('');
+  const [notice, setNotice] = React.useState(null); // {text, taskId}: a short message over the board
+  const [dropping, setDropping] = React.useState(false);
   const plane = React.useRef(null);
+  React.useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), 2800);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   // Follow the server unless the user is dragging a node right now.
   const serverNodes = JSON.stringify(flow.nodes);
@@ -87,7 +82,16 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
     return { x: 40, y: live.length ? bottom + 40 : 40 };
   };
   const addNode = (taskId, spot = freeSpot()) => {
-    if (inFlow.has(taskId)) return;
+    const t = byId.get(taskId);
+    if (!t) return;
+    if (inFlow.has(taskId)) {
+      // Already on this board: say so and point at it rather than adding a second node.
+      setNotice({ text: `"${t.title}" đã có trong luồng này.`, taskId });
+      document.querySelector(`[data-node="${CSS.escape(taskId)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    const holder = live.find((n) => byId.get(n.taskId)?.kind === 'group' && isUnder(tasks, taskId, n.taskId));
+    if (holder) setNotice({ text: `Đã thêm. Lưu ý: việc này nằm trong mốc "${byId.get(holder.taskId).title}" cũng có trong luồng.`, taskId: holder.taskId });
     saveNodes([...nodes, { taskId, x: Math.max(0, Math.round(spot.x)), y: Math.max(0, Math.round(spot.y)) }]);
   };
   const removeNode = (taskId) => {
@@ -187,27 +191,23 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
   // ---- toolbar ----
   const actors = [...new Set(events.map((e) => e.actor).filter((a) => a && a !== 'human' && a !== 'migration'))];
   const run = (status) => call('flow.update', { flowId: flow.id, status }).catch(onError);
+  const rename = async () => {
+    const title = await askText({ title: 'Đổi tên luồng', label: 'Tên luồng', initial: flow.title, required: true, confirmLabel: 'Lưu' });
+    if (title && title !== flow.title) call('flow.update', { flowId: flow.id, title }).catch(onError);
+  };
   const remove = async () => {
     const ok = await confirmAction({ title: 'Xoá luồng', text: `Xoá luồng "${flow.title}"? Các việc và mũi tên thứ tự vẫn giữ nguyên.`, confirmLabel: 'Xoá luồng', danger: true });
     if (ok) call('flow.delete', { flowId: flow.id }).catch(onError);
   };
 
-  // ---- the palette: items not on the canvas yet ----
-  const palette = [];
-  const q = query.trim().toLowerCase();
-  const walk = (parentId, depth) => {
-    for (const t of childrenOf(tasks, parentId)) {
-      if (t.status === 'dropped') continue;
-      if (!inFlow.has(t.id) && (!q || t.title.toLowerCase().includes(q))) palette.push({ t, depth: q ? 0 : depth });
-      walk(t.id, depth + 1);
-    }
-  };
-  walk(null, 0);
-
   return (
     <div className="flow">
       <div className="flow-bar">
-        <Editable className="flow-title" value={flow.title} onSave={(title) => title && call('flow.update', { flowId: flow.id, title }).catch(onError)} />
+        <select className="select flow-pick" value={flow.id} aria-label="Luồng" onChange={(e) => onSelectFlow(e.target.value)}>
+          {flows.map((f) => <option key={f.id} value={f.id}>{f.title} · {STATE_LABEL[f.state]}</option>)}
+        </select>
+        <button className="icon-btn" title="Đổi tên luồng" aria-label="Đổi tên luồng" onClick={rename}><Pencil size={15} /></button>
+        <button className="icon-btn" title="Luồng mới" aria-label="Luồng mới" onClick={onNewFlow}><Plus size={16} /></button>
         <span className={`chip chip-flow-${flow.state}`}>{STATE_LABEL[flow.state]}</span>
         <span className="muted small">{flow.done}/{flow.total} việc xong</span>
         <Bar value={flow.total ? flow.done / flow.total : 0} status={flow.state === 'done' ? 'done' : undefined} />
@@ -226,27 +226,21 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
       </div>
 
       <div className="flow-body">
-        <aside className="palette">
-          <div className="palette-search"><Search size={14} className="muted" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm việc, mốc…" /></div>
-          <p className="muted small palette-hint">Kéo vào bảng, hoặc bấm + để thêm.</p>
-          <ul className="palette-list">
-            {palette.map(({ t, depth }) => (
-              <li key={t.id} draggable style={{ paddingLeft: 8 + depth * 12 }} className={t.kind === 'group' ? 'palette-group' : ''}
-                onDragStart={(e) => { e.dataTransfer.setData('application/x-nhanh-task', t.id); e.dataTransfer.effectAllowed = 'copy'; }}>
-                {t.kind === 'group' ? <Flag size={13} className="muted" /> : <StatusIcon status={t.status} />}
-                <span className="grow ellipsis" title={t.title}>{t.title}</span>
-                <button className="mini" aria-label={`Thêm "${t.title}" vào luồng`} onClick={() => addNode(t.id)}><Plus size={13} /></button>
-              </li>
-            ))}
-            {!palette.length && <li className="muted small">Mọi việc đã ở trong luồng.</li>}
-          </ul>
-        </aside>
-
+        {notice && (
+          <div className="flow-notice" role="status" onMouseEnter={() => setNotice({ ...notice })}>{notice.text}</div>
+        )}
         <div className="canvas" onClick={(e) => { if (e.target === e.currentTarget || e.target === plane.current) setEdge(null); }}>
-          <div ref={plane} className={`plane ${linking ? 'linking' : ''}`} style={{ width, height }}
+          <div ref={plane} className={`plane ${linking ? 'linking' : ''} ${dropping ? 'plane-drop' : ''}`} style={{ width, height }}
             onPointerMove={onPlaneMove} onPointerUp={onPlaneUp}
-            onDragOver={(e) => { if (e.dataTransfer.types.includes('application/x-nhanh-task')) e.preventDefault(); }}
+            onDragOver={(e) => {
+              if (!e.dataTransfer.types.includes('application/x-nhanh-task')) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'copy';
+              if (!dropping) setDropping(true);
+            }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDropping(false); }}
             onDrop={(e) => {
+              setDropping(false);
               const id = e.dataTransfer.getData('application/x-nhanh-task');
               if (!id) return;
               e.preventDefault();
@@ -291,7 +285,7 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
             {live.map((n) => (
               <Node key={n.taskId} n={n} t={byId.get(n.taskId)} tasks={tasks} inFlow={inFlow} byId={byId}
                 next={next.has(n.taskId) || (byId.get(n.taskId).kind === 'group' && flow.next.some((id) => isUnder(tasks, id, n.taskId)))}
-                selected={selectedTaskId === n.taskId} dragging={movingId === n.taskId}
+                selected={selectedTaskId === n.taskId} dragging={movingId === n.taskId} flash={notice?.taskId === n.taskId}
                 onDown={(e) => onNodeDown(e, n)}
                 onLink={(e) => { e.stopPropagation(); e.currentTarget.closest('.plane').setPointerCapture?.(e.pointerId); setLinking({ from: n.taskId, ...at(e) }); }}
                 onRemove={() => removeNode(n.taskId)}
@@ -300,7 +294,7 @@ function FlowCanvas({ flow, tasks, events, selectedTaskId, onOpenTask, onError }
 
             {!live.length && (
               <div className="plane-empty">
-                <p><strong>Kéo việc hoặc mốc từ danh sách bên trái vào đây.</strong></p>
+                <p><strong>Kéo việc hoặc mốc từ cây bên trái vào đây.</strong></p>
                 <p className="muted">Kéo từ chấm tròn bên phải một ô sang ô khác để nối mũi tên: ô sau chỉ chạy khi ô trước xong.<br />
                   Nối từ một mốc = chờ cả mốc xong. Nhiều mũi tên vào một ô: mặc định chờ tất cả, bấm nhãn ở cạnh trái để đổi thành "một trong".<br />
                   Xong thì điền "Giao cho" và bấm Chạy: agent đó nhận từng việc theo thứ tự ở đầu mỗi phiên.</p>
@@ -318,7 +312,7 @@ const isUnder = (tasks, id, groupId) => {
   return false;
 };
 
-function Node({ n, t, tasks, inFlow, byId, next, selected, dragging, onDown, onLink, onRemove, onMode }) {
+function Node({ n, t, tasks, inFlow, byId, next, selected, dragging, flash, onDown, onLink, onRemove, onMode }) {
   const group = t.kind === 'group';
   const incoming = (t.after || []).filter((id) => inFlow.has(id)).length;
   const outside = (t.after || []).filter((id) => !inFlow.has(id)).map((id) => byId.get(id)?.title).filter(Boolean);
@@ -328,7 +322,7 @@ function Node({ n, t, tasks, inFlow, byId, next, selected, dragging, onDown, onL
   const state = isFinished(tasks, t) ? 'done' : t.status === 'doing' ? 'doing' : t.status === 'blocked' ? 'blocked' : next ? 'next' : waiting ? 'waiting' : 'todo';
   const crit = t.criteria?.length ? `${t.criteria.filter((c) => c.done).length}/${t.criteria.length}` : '';
   return (
-    <div data-node={t.id} className={`node node-${state} ${group ? 'node-group' : ''} ${t.review === 'pending' ? 'node-pending' : ''} ${selected ? 'on' : ''} ${dragging ? 'node-dragging' : ''}`}
+    <div data-node={t.id} className={`node node-${state} ${group ? 'node-group' : ''} ${t.review === 'pending' ? 'node-pending' : ''} ${selected ? 'on' : ''} ${dragging ? 'node-dragging' : ''} ${flash ? 'node-flash' : ''}`}
       style={{ left: n.x, top: n.y, width: W, height: H }} onPointerDown={onDown}>
       <span className="port port-in" aria-hidden="true" />
       {incoming > 1 && (

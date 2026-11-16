@@ -5,7 +5,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import Markdown from 'react-markdown';
-import { Bell, Check, ChevronDown, ChevronRight, Flag, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
+import { Bell, Check, ChevronDown, ChevronRight, Flag, GitFork, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
 import { call, subscribe } from './api.js';
 import { childrenOf, descendantIds } from '../shared/model.js';
 import TaskPanel, { Journal, QuestionBox } from './TaskPanel.jsx';
@@ -221,6 +221,10 @@ function Project({ projectId, taskId, onError }) {
   const [preset, setPreset] = React.useState(null);
   const [drag, setDrag] = React.useState(null);
   const [drop, setDrop] = React.useState(null);
+  const [flowId, setFlowId] = React.useState(null);
+  // Luồng tab: the tree on the left, the board on the right; the user drags the divider, the width is remembered.
+  const [split, setSplit] = React.useState(() => Number(localStorage.getItem('nhanh-split')) || 0.42);
+  const splitBox = React.useRef(null);
   const load = React.useCallback(() => call('project.get', { projectId, events: 300 }).then(setData).catch(onError), [projectId, onError]);
   React.useEffect(() => { load(); window.addEventListener('nhanh-change', load); return () => window.removeEventListener('nhanh-change', load); }, [load]);
   const openTask = React.useCallback((id) => go(projectPath(projectId, id)), [projectId]);
@@ -250,6 +254,20 @@ function Project({ projectId, taskId, onError }) {
   const addInside = (t) => setPreset({ parentId: t.id, kind: 'task', n: Date.now() });
   const newMilestone = () => setPreset({ parentId: null, kind: 'group', n: Date.now() });
   const reviewItems = tasks.filter(isPending);
+  const flow = flows.find((f) => f.id === flowId) || flows[0] || null;
+  const onBoard = tab === 'flow' && flow ? new Set(flow.nodes.map((n) => n.taskId)) : null;
+  const onSplitDown = (e) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const box = splitBox.current.getBoundingClientRect();
+    const onMove = (m) => setSplit(Math.min(0.75, Math.max(0.2, (m.clientX - box.left) / box.width)));
+    const onUp = (u) => {
+      u.currentTarget.removeEventListener('pointermove', onMove);
+      u.currentTarget.removeEventListener('pointerup', onUp);
+      setSplit((value) => { localStorage.setItem('nhanh-split', String(value)); return value; });
+    };
+    e.currentTarget.addEventListener('pointermove', onMove);
+    e.currentTarget.addEventListener('pointerup', onUp);
+  };
 
   const rowActions = {
     onToggle: toggle, onOpen: openTask, onAddInside: addInside, onShift: shift,
@@ -275,7 +293,7 @@ function Project({ projectId, taskId, onError }) {
       if (!visible.has(t.id)) continue;
       const kids = childrenOf(tasks, t.id).length > 0;
       rows.push(<Row key={t.id} t={t} depth={depth} hasKids={kids} closed={closed.has(t.id)} selected={t.id === taskId}
-        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} actions={rowActions} />);
+        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} onBoard={onBoard?.has(t.id)} actions={rowActions} />);
       if (kids && !closed.has(t.id)) walk(t.id, depth + 1);
     }
   };
@@ -308,7 +326,8 @@ function Project({ projectId, taskId, onError }) {
           </div>
         </header>
 
-        {tab === 'plan' && (
+        {(tab === 'plan' || tab === 'flow') && (() => {
+          const planView = (
           <>
             <Composer projectId={projectId} tasks={tasks} preset={preset} onError={onError} />
             {reviewItems.length > 0 && (
@@ -335,12 +354,25 @@ function Project({ projectId, taskId, onError }) {
               : (
                 <>
                   <div className="tree" role="tree">{rows}</div>
-                  <p className="muted small tree-hint">Kéo một dòng để đổi thứ tự hoặc chuyển mốc (thả vào giữa dòng để đặt bên trong). Alt+↑/↓ để dời lên xuống. Agent làm theo thứ tự từ trên xuống.</p>
+                  <p className="muted small tree-hint">{tab === 'flow'
+                    ? 'Kéo một dòng sang bảng bên phải để thêm vào luồng. Trong cây: kéo để đổi thứ tự hoặc chuyển mốc.'
+                    : 'Kéo một dòng để đổi thứ tự hoặc chuyển mốc (thả vào giữa dòng để đặt bên trong). Alt+↑/↓ để dời lên xuống. Agent làm theo thứ tự từ trên xuống.'}</p>
                 </>
               )}
           </>
-        )}
-        {tab === 'flow' && <FlowView projectId={projectId} tasks={tasks} flows={flows} events={events} selectedTaskId={taskId} onOpenTask={openTask} onError={onError} />}
+          );
+          if (tab === 'plan') return planView;
+          return (
+            <div className="split" ref={splitBox}>
+              <div className="split-left" style={{ width: `${split * 100}%` }}>{planView}</div>
+              <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để đổi độ rộng" onPointerDown={onSplitDown} />
+              <div className="split-right">
+                <FlowView projectId={projectId} tasks={tasks} flows={flows} flow={flow} onSelectFlow={setFlowId} events={events}
+                  selectedTaskId={taskId} onOpenTask={openTask} onError={onError} />
+              </div>
+            </div>
+          );
+        })()}
         {tab === 'journal' && <div className="pad-x"><Journal events={events} tasks={tasks} onOpenTask={openTask} /></div>}
         {tab === 'notes' && <Notes project={p} onError={onError} />}
       </div>
@@ -349,7 +381,7 @@ function Project({ projectId, taskId, onError }) {
   );
 }
 
-function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, actions }) {
+function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard, actions }) {
   const group = t.kind === 'group';
   const r = t.rollup;
   const openQuestion = t.question && !t.question.answer;
@@ -371,7 +403,13 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, actions 
         if (e.altKey && e.key === 'ArrowUp') { e.preventDefault(); actions.onShift(t, -1); }
         if (e.altKey && e.key === 'ArrowDown') { e.preventDefault(); actions.onShift(t, 1); }
       }}
-      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', t.id); actions.onDragStart(t); }}
+      onDragStart={(e) => {
+        // Moving within the tree, or copying onto a flow board (application/x-nhanh-task).
+        e.dataTransfer.effectAllowed = 'copyMove';
+        e.dataTransfer.setData('text/plain', t.id);
+        e.dataTransfer.setData('application/x-nhanh-task', t.id);
+        actions.onDragStart(t);
+      }}
       onDragEnd={actions.onDragEnd}
       onDragOver={(e) => { if (actions.onDragOver(t, zoneOf(e))) e.preventDefault(); }}
       onDrop={(e) => { e.preventDefault(); actions.onDrop(t, zoneOf(e)); }}>
@@ -381,6 +419,7 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, actions 
         : <span className="caret" />}
       {group ? <Flag size={14} className="st muted" /> : <StatusIcon status={t.status} question={openQuestion} />}
       <span className="tr-title ellipsis">{t.title}</span>
+      {onBoard && <span className="tag tag-board" title="Đã có trong luồng đang mở"><GitFork size={11} /> trong luồng</span>}
       {pending && (
         <>
           <span className="tag tag-review" title={t.reason || 'Agent đề xuất'}>chờ duyệt</span>

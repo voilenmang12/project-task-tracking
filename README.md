@@ -31,8 +31,10 @@ Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đ�
 - **Duyệt việc agent thêm** (bật ở đầu trang dự án; dự án tạo trên web bật sẵn): mốc và việc agent thêm bằng
   `plan.apply` hoặc `task.add` hiện "chờ duyệt"; agent không bắt đầu chúng trước khi bạn bấm Duyệt (duyệt một mốc
   là duyệt cả các việc bên trong). Bỏ một đề xuất kèm lý do để agent đọc. Trước khi duyệt có thể sửa, sắp xếp lại.
-- **Dự án → Luồng**: bảng kéo-thả để chạy việc theo thứ tự, kể cả việc nằm ở các nhánh khác nhau của cây. Kéo việc
-  hoặc mốc từ danh sách bên trái vào bảng, kéo từ chấm tròn bên phải một ô sang ô khác để nối mũi tên "xong ô này
+- **Dự án → Luồng**: màn hình chia đôi, bên trái là cây việc (thêm, lọc, sắp xếp như tab Kế hoạch), bên phải là bảng
+  kéo-thả để chạy việc theo thứ tự, kể cả việc nằm ở các nhánh khác nhau của cây; kéo thanh giữa để đổi độ rộng. Kéo
+  một dòng của cây sang bảng để tạo node (đã có thì bảng báo và nháy node đó; dòng đã có trên bảng mang nhãn "trong
+  luồng"), kéo từ chấm tròn bên phải một ô sang ô khác để nối mũi tên "xong ô này
   mới đến ô kia". Mũi tên từ một mốc nghĩa là chờ cả mốc xong. Ô có nhiều mũi tên vào mặc định chờ **tất cả**, bấm
   nhãn trên ô để đổi thành **một trong**. Bấm mũi tên rồi Delete để xoá; nút lưới sắp xếp tự động. Điền "Giao cho"
   (tên actor của agent, vd `claude-cg01`) rồi bấm **Chạy**: ở đầu mỗi phiên, digest của agent đó đưa ra việc kế tiếp
