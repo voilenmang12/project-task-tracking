@@ -64,6 +64,11 @@ Send it as a file: `nhanh plan.apply --file plan.json --actor <actor>`.
 
 Then tell the user, in your closing message, how many milestones and tasks the plan has and what you left coarse.
 
+**Review.** On a project with review on (the user's setting), every item you add with `plan.apply` or `task.add`
+is a proposal: the digest lists it under `AWAITING REVIEW` and `task.start` refuses it (409) until the user
+approves it in the web UI. The user may edit, reorder or drop proposals first; read the digest again before you
+start. A dropped proposal carries the user's reason: do not propose the same thing again without new facts.
+
 ## 3. Work added on the way
 
 The plan is the user's picture of the scope. Changing it silently makes the progress number a lie, so every

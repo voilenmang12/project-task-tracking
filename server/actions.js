@@ -5,7 +5,7 @@
 // (plan.apply, task.start, task.progress, task.add, task.ask, task.block, task.done) and the tracker keeps the
 // state, the journal and the numbers consistent.
 import {
-  HUMAN, KINDS, SIZES, childrenOf, descendantIds, needsAgent, needsUser, nextTasks, projectSummary, rollup,
+  HUMAN, KINDS, SIZES, awaitingReview, childrenOf, descendantIds, needsAgent, needsUser, nextTasks, projectSummary, rollup,
 } from '../shared/model.js';
 
 const MAX_EVENTS = 5000;
@@ -97,6 +97,7 @@ function makeContext(w, actor, now) {
     evidence: null,
     summary: '',
     question: null,
+    review: fields.review ?? null,
     origin: fields.origin,
     reason: fields.reason || '',
     ack: fields.origin !== 'user',
@@ -106,6 +107,12 @@ function makeContext(w, actor, now) {
     startedAt: null,
     doneAt: null,
   });
+  // On a project with review on, what an agent proposes waits for the user's approval.
+  const proposal = (projectId) => (!isHuman && project(projectId).review ? 'pending' : null);
+  const underReview = (t) => {
+    for (let p = t; p; p = p.parentId ? w.tasks.find((x) => x.id === p.parentId) : null) if (awaitingReview(p)) return p;
+    return null;
+  };
   // Another agent's work in progress is not ours to change. The user can always step in.
   const mine = (t, verb) => {
     if (isHuman || !t.owner || t.owner === actor || t.status !== 'doing') return;
@@ -125,7 +132,7 @@ function makeContext(w, actor, now) {
   const kindOk = (kind) => kind === undefined || KINDS.includes(kind) || fail(`kind is one of ${KINDS.join(', ')}`);
   const labelsOk = (labels) =>
     labels === undefined || labels.every((l) => typeof l === 'string' && l.trim() && l.length <= 40) || fail('labels are short texts');
-  return { w, actor, now, isHuman, project, task, log, uniqueId, criteria, newTask, mine, tick, sizeOk, kindOk, labelsOk };
+  return { w, actor, now, isHuman, project, task, log, proposal, underReview, uniqueId, criteria, newTask, mine, tick, sizeOk, kindOk, labelsOk };
 }
 
 const view = (w, t, roll) => ({ ...t, rollup: roll[t.id], needsUser: needsUser(t), needsAgent: needsAgent(t) });
@@ -170,6 +177,7 @@ const ACTIONS = [
         doing: tasks.filter((t) => t.status === 'doing').map(brief),
         blocked: tasks.filter((t) => t.status === 'blocked').map(brief),
         waitingForUser: tasks.filter((t) => t.question && !t.question.answer).map(brief),
+        awaitingReview: w.tasks.filter((t) => t.projectId === p.id && awaitingReview(t)).map(brief),
         next: nextTasks(w, p.id).map(brief),
         recent: w.events.filter((e) => e.projectId === p.id).slice(-8),
       };
@@ -185,6 +193,7 @@ const ACTIONS = [
       return {
         questions: live.filter((t) => t.question && !t.question.answer).map(item),
         blocked: live.filter((t) => t.status === 'blocked').map(item),
+        review: w.tasks.filter((t) => awaitingReview(t) && !w.projects.find((p) => p.id === t.projectId)?.archived).map(item),
         pending: live.filter(needsAgent).map(item),
       };
     },
@@ -211,15 +220,15 @@ const ACTIONS = [
   },
 
   {
-    name: 'project.create', args: { id: S(100), title: req(S(200)), description: TEXT, repo: S(300), stage: S(40) },
-    description: 'Create a project. Give a stable id (for example "cg01-mortalbound") so a retry does not create a second one.',
+    name: 'project.create', args: { id: S(100), title: req(S(200)), description: TEXT, repo: S(300), stage: S(40), review: BOOL },
+    description: 'Create a project. Give a stable id (for example "cg01-mortalbound") so a retry does not create a second one. review:true makes every item an agent adds wait for approval by the user before work starts on it.',
     run: (c, a) => {
       const existing = a.id && c.w.projects.find((p) => p.id === a.id);
       if (existing) return existing;
       if (a.stage && !STAGES.includes(a.stage)) fail(`stage is one of ${STAGES.join(', ')}`);
       const p = {
         id: c.uniqueId(a.id || slug(a.title)), title: a.title.trim(), description: a.description || '', repo: a.repo || '',
-        stage: a.stage || 'idea', brief: '', archived: false, createdAt: c.now,
+        stage: a.stage || 'idea', brief: '', archived: false, review: Boolean(a.review), createdAt: c.now,
       };
       c.w.projects.push(p);
       c.log('project', p.id, null, `Project created: ${p.title}`);
@@ -228,14 +237,15 @@ const ACTIONS = [
   },
   {
     name: 'project.update',
-    args: { projectId: req(S(100)), title: S(200), description: TEXT, repo: S(300), stage: S(40), brief: { type: 'string', max: 200000 }, archived: BOOL },
-    description: 'Change a project\'s title, description, repo folder, lifecycle stage, brief (Markdown) or archive it.',
+    args: { projectId: req(S(100)), title: S(200), description: TEXT, repo: S(300), stage: S(40), brief: { type: 'string', max: 200000 }, archived: BOOL, review: BOOL },
+    description: 'Change a project\'s title, description, repo folder, lifecycle stage, brief (Markdown), review setting (review:true = items agents add wait for approval by the user), or archive it.',
     run: (c, a) => {
       const p = c.project(a.projectId);
       if (a.stage && !STAGES.includes(a.stage)) fail(`stage is one of ${STAGES.join(', ')}`);
       const before = p.stage;
-      for (const key of ['title', 'description', 'repo', 'stage', 'brief', 'archived']) if (a[key] !== undefined && a[key] !== null) p[key] = a[key];
+      for (const key of ['title', 'description', 'repo', 'stage', 'brief', 'archived', 'review']) if (a[key] !== undefined && a[key] !== null) p[key] = a[key];
       if (a.stage && a.stage !== before) c.log('project', p.id, null, `Stage: ${before} → ${a.stage}`);
+      if (a.review !== undefined && a.review !== null) c.log('project', p.id, null, a.review ? 'Review on: items agents add wait for approval' : 'Review off');
       return p;
     },
   },
@@ -251,7 +261,7 @@ const ACTIONS = [
 
   {
     name: 'plan.apply', args: { projectId: req(S(100)), nodes: req(LIST), note: S(2000) },
-    description: 'Set up or extend the plan in one call. nodes: [{id, title, kind?, size?, description?, criteria?: [text], labels?, children?: [...]}]. An item with children is a group unless kind says otherwise. Items are matched by id: a new id is created, a known id gets its title, description, size and missing criteria updated. Nothing is ever deleted and no status changes, so the call is safe to repeat.',
+    description: 'Set up or extend the plan in one call. On a project with review on, new items wait for approval by the user (digest: awaitingReview) and cannot be started before. nodes: [{id, title, kind?, size?, description?, criteria?: [text], labels?, children?: [...]}]. An item with children is a group unless kind says otherwise. Items are matched by id: a new id is created, a known id gets its title, description, size and missing criteria updated. Nothing is ever deleted and no status changes, so the call is safe to repeat.',
     run: (c, a) => {
       c.project(a.projectId);
       const created = [];
@@ -277,7 +287,7 @@ const ACTIONS = [
               updated.push(id);
             }
           } else {
-            t = c.newTask({ ...n, id, kind, projectId: a.projectId, parentId, origin: 'plan' });
+            t = c.newTask({ ...n, id, kind, projectId: a.projectId, parentId, origin: 'plan', review: c.proposal(a.projectId) });
             c.w.tasks.push(t);
             created.push(id);
           }
@@ -304,6 +314,7 @@ const ACTIONS = [
       if (!c.isHuman && !a.reason?.trim()) fail('task.add: "reason" is required when an agent adds work (why it is needed, what revealed it)');
       const t = c.newTask({
         ...a, kind: a.kind || 'task', id: c.uniqueId(a.id || `${a.projectId}-${slug(a.title)}`), origin: c.isHuman ? 'user' : 'agent',
+        review: c.proposal(a.projectId),
       });
       c.w.tasks.push(t);
       c.log('added', t.projectId, t.id, c.isHuman ? 'Requested by the user' : `Added while working: ${a.reason.trim()}`);
@@ -361,6 +372,10 @@ const ACTIONS = [
       const t = c.task(a.taskId);
       if (t.kind !== 'task') fail('task.start: a group is not started; start one of its tasks');
       if (t.status === 'done' || t.status === 'dropped') fail(`task.start: task is ${t.status}; task.reopen it first`);
+      const pending = c.underReview(t);
+      if (pending && !c.isHuman) {
+        fail(`task.start: "${pending.id}" waits for the user's approval. Take an approved task, or task.ask if this one is urgent.`, 409);
+      }
       if (t.status === 'doing' && t.owner && t.owner !== c.actor && !a.takeover && !c.isHuman) {
         fail(`task.start: "${t.id}" is being done by ${t.owner} since ${t.startedAt}. Take another task, or pass takeover:true if that work was abandoned.`, 409);
       }
@@ -444,6 +459,32 @@ const ACTIONS = [
       t.updatedAt = c.now;
       c.log('answered', t.projectId, t.id, t.question.answer);
       return t;
+    },
+  },
+  {
+    name: 'task.approve', args: { taskId: req(S(100)), note: S(2000) },
+    description: 'The user approves an item an agent proposed: it, the items under it and the groups above it may be worked on. Only the user approves; a rejected proposal is dropped (task.drop) or deleted.',
+    run: (c, a) => {
+      if (!c.isHuman) fail('task.approve: only the user approves proposed work', 403);
+      const t = c.task(a.taskId);
+      const ids = descendantIds(c.w.tasks, t.id);
+      ids.add(t.id);
+      for (let p = t; p.parentId; ) {
+        p = c.task(p.parentId);
+        ids.add(p.id);
+      }
+      const approved = [];
+      for (const x of c.w.tasks) {
+        if (ids.has(x.id) && x.review === 'pending') {
+          x.review = null;
+          x.updatedAt = c.now;
+          approved.push(x.id);
+        }
+      }
+      if (!approved.length) return { approved };
+      const text = a.note?.trim() || (approved.length > 1 ? `Approved ${approved.length} items` : 'Approved');
+      c.log('approved', t.projectId, t.id, text, { approved });
+      return { approved };
     },
   },
   {

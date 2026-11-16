@@ -90,6 +90,7 @@ function digestText(d) {
   section('IN PROGRESS', d.doing, true);
   section('BLOCKED', d.blocked, true);
   section('WAITING FOR THE USER', d.waitingForUser.filter((t) => t.status !== 'blocked' && t.status !== 'doing'), true);
+  section('AWAITING REVIEW — proposed, the user has not approved it yet: do not start it', d.awaitingReview || [], false);
   section('NEXT (in plan order)', d.next, true);
   if (d.recent.length) {
     out.push('', 'RECENT:');

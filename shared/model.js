@@ -37,8 +37,12 @@ export function descendantIds(tasks, id) {
   return found;
 }
 
-/** True when the task waits for the user: an open question, or blocked. */
-export const needsUser = (task) => Boolean(task.question && !task.question.answer) || task.status === 'blocked';
+/** True when an agent proposed the item and the user has not approved it yet. Agents do not start it meanwhile. */
+export const awaitingReview = (task) => task.review === 'pending' && task.status !== 'done' && task.status !== 'dropped';
+
+/** True when the task waits for the user: an open question, blocked, or proposed and not reviewed yet. */
+export const needsUser = (task) =>
+  Boolean(task.question && !task.question.answer) || task.status === 'blocked' || awaitingReview(task);
 
 /** True when the user wrote something the agents have not picked up yet. */
 export const needsAgent = (task) =>
@@ -120,6 +124,7 @@ export function projectSummary(workspace, projectId) {
     doing: work.filter((t) => t.status === 'doing').map((t) => ({ id: t.id, title: t.title, owner: t.owner, agent: t.agent })),
     needsUser: work.filter(needsUser).length,
     needsAgent: work.filter(needsAgent).length,
+    awaitingReview: tasks.filter(awaitingReview).length,
     lastEventAt: lastEvent?.at ?? null,
   };
 }
@@ -136,7 +141,12 @@ export function nextTasks(workspace, projectId, limit = 5) {
   };
   walk(null);
   const hasOpenChild = (t) => tasks.some((c) => c.parentId === t.id && c.status !== 'done' && c.status !== 'dropped');
-  const open = ordered.filter((t) => t.kind === 'task' && t.status === 'todo' && !hasOpenChild(t));
+  const pendingIds = new Set(tasks.filter(awaitingReview).map((t) => t.id));
+  const underReview = (t) => {
+    for (let p = t; p; p = tasks.find((x) => x.id === p.parentId)) if (pendingIds.has(p.id)) return true;
+    return false;
+  };
+  const open = ordered.filter((t) => t.kind === 'task' && t.status === 'todo' && !hasOpenChild(t) && !underReview(t));
   return [...open.filter((t) => t.origin === 'user'), ...open.filter((t) => t.origin !== 'user')].slice(0, limit);
 }
 
