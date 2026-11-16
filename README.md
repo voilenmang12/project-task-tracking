@@ -57,7 +57,8 @@ tracker; `NHANH_WORKSPACE` đổi gốc này). Bạn có thể dặn thêm agent
   `NEXT` của luồng cho tới hết. Không ai trả lời trong lúc chạy: cần quyết định thì `task.ask` kèm phương án mặc
   định rồi làm tiếp; kẹt thì `task.block` rồi dừng.
 - Actor của phiên là `run-<n>`, hiện là **Nhánh #n**. Quyền là quyền trong `.claude/settings.json` của repo; lệnh
-  ngoài danh sách cho phép bị từ chối chứ không chờ.
+  ngoài danh sách cho phép bị từ chối chứ không chờ. Riêng CLI của tracker luôn được phép, để phiên báo cáo được.
+- Phiên kết thúc mà việc (hoặc luồng) chưa xong thì lượt chạy là **Chưa xong**: xem việc bị chặn hoặc câu hỏi ở Cần bạn.
 - Mỗi repo chạy một lượt một lúc; lượt khác hiện "Chờ lượt" và tự bắt đầu sau.
 - **Hiển thị**: mục **Đang chạy** ở thanh bên (số lượt đang chạy), đầu trang dự án, nhãn "Nhánh #n đang chạy" trên
   dòng việc, thẻ trên Tổng quan. Nút **Log** mở nhật ký trực tiếp (lệnh, agent con, lỗi) và báo cáo cuối; **Dừng**

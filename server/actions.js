@@ -778,6 +778,12 @@ const ACTIONS = [
       if (c.actor !== RUNNER) fail('run.report: only the tracker\'s run supervisor writes this', 403);
       const r = c.w.runs.find((x) => x.id === a.runId) || fail(`Run "${a.runId}" not found`, 404);
       for (const key of ['pid', 'sessionId', 'summary', 'error', 'exitCode']) if (a[key] !== undefined && a[key] !== null) r[key] = a[key];
+      if (a.status === 'done') {
+        // A session that ended well has not necessarily finished its work: say so when the target is not done.
+        const t = r.target.kind === 'task' && c.w.tasks.find((x) => x.id === r.target.id);
+        const fl = r.target.kind === 'flow' && c.w.flows.find((x) => x.id === r.target.id);
+        if ((t && t.status !== 'done') || (fl && flowState(c.w, fl).status !== 'done')) a.status = 'unfinished';
+      }
       if (a.status && a.status !== r.status) {
         if (!RUN_STATUSES.includes(a.status)) fail(`status is one of ${RUN_STATUSES.join(', ')}`);
         r.status = a.status;
@@ -795,7 +801,7 @@ const ACTIONS = [
           }
           const fl = r.target.kind === 'flow' && c.w.flows.find((x) => x.id === r.target.id);
           if (fl && fl.assignee === r.actor && fl.status === 'running') fl.status = 'paused';
-          const text = { done: 'finished', failed: `failed: ${r.error || `exit code ${r.exitCode}`}`, stopped: 'stopped', interrupted: 'interrupted (the tracker restarted)' }[a.status];
+          const text = { done: 'finished', unfinished: 'ended, the work is not finished', failed: `failed: ${r.error || `exit code ${r.exitCode}`}`, stopped: 'stopped', interrupted: 'interrupted (the tracker restarted)' }[a.status];
           c.log('run', r.projectId, r.target.kind === 'task' ? r.target.id : null, `${r.id} ${text}${r.summary ? `\n${r.summary}` : ''}`);
         }
       }

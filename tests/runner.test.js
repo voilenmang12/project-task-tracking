@@ -39,12 +39,13 @@ test('a run starts the CLI in the repository, keeps a readable log and records t
   try {
     const r = await s.run('run.start', { taskId: 'a', note: 'Keep it small' });
     assert.equal(r.actor, 'run-1');
-    const done = await s.until('run-1', 'done');
+    const done = await s.until('run-1', 'unfinished'); // the session ended well, but task a is not done
     assert.equal(done.sessionId, 'fake-session');
     assert.match(done.summary, /finished on task\/x/);
     const log = s.runner.readLog('run-1').text;
     assert.match(log, /💬 Actor run-1; task/);
     assert.match(log, /→ Bash: git checkout -b task\/x/);
+    assert.match(log, /allowed=Bash\(node [^)]*nhanh\.mjs"?:\*\); prompt uses it: true/, 'only the tracker CLI is pre-approved, and the prompt names it');
     assert.match(log, /■ Kết thúc \(success, 3 lượt · \$0\.12\)/);
     assert.equal(s.runner.readLog('../x').text, '', 'only run logs are served');
     assert.doesNotMatch(log, /LEAKED/, 'a host Claude Code session does not leak into the run');
