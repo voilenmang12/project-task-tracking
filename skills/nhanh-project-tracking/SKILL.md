@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Plans, runs and reports a project's work through the Nhanh local tracker, where the user reviews plans as flows and follows autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), when the user asks to plan work (instead of plan mode), when they say to run a plan, at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.6.0"
+  version: "2.7.0"
 ---
 
 # Nhánh project tracking
@@ -16,13 +16,19 @@ start a second server and never write its data files.
 
 ## Connect
 
-`scripts/nhanh.mjs` in this skill folder is the client (Node.js 22+, no dependencies). Below, `nhanh` means
-`node <this skill folder>/scripts/nhanh.mjs`.
+Two ways in, the same actions:
+
+- **MCP tools** (preferred when present): an `nhanh` MCP server (`scripts/nhanh-mcp.mjs`) gives each action as a tool,
+  `task.start` as `task_start` and so on (in Claude Code: `mcp__nhanh__task_start`). It knows your actor and project
+  from its settings or the repository's `project.yaml`, so `projectId` may be left out. A tracker run gets its own
+  server, `nhanh-run`. Setup: [connection.md](references/connection.md).
+- **CLI**: `scripts/nhanh.mjs` (Node.js 22+, no dependencies). Below, `nhanh <action>` means the CLI or the tool of
+  the same name.
 
 - Server: `http://127.0.0.1:5173` (`NHANH_URL` changes it). Not answering: [connection.md](references/connection.md).
 - The **project id** and your **actor** name come from the repository's instructions or config (for example
   `tracker.project_id` and `tracker.actor` in `project.yaml`). Never guess a project; never create one unasked.
-- Pass the actor on every change: `--actor claude-cg01`, or set `NHANH_ACTOR` once. One actor per session; two
+- With the CLI, pass the actor on every change: `--actor claude-cg01`, or set `NHANH_ACTOR` once. One actor per session; two
   sessions in one repo use two names (`claude-cg01`, `claude-cg01-b`).
 - `nhanh actions` lists every action with its arguments. Short arguments go on the command line (`taskId=hub`);
   anything long or multi-line goes in a JSON file (`--file request.json`) or on stdin (`--stdin`). Never build a

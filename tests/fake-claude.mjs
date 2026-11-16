@@ -9,6 +9,10 @@ process.stdin.on('end', async () => {
   say({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git checkout -b task/x' } }] } });
   const allowed = process.argv[process.argv.indexOf('--allowedTools') + 1] || '';
   say({ type: 'assistant', message: { content: [{ type: 'text', text: `allowed=${allowed}; prompt uses it: ${prompt.includes(allowed.slice(5, -3))}` }] } });
+  const tools = process.argv.slice(process.argv.indexOf('--allowedTools') + 1);
+  const mcp = JSON.parse(process.argv[process.argv.indexOf('--mcp-config') + 1] || '{}').mcpServers?.['nhanh-run'];
+  const mcpLine = `mcp tools allowed: ${tools.includes('mcp__nhanh-run')}; mcp actor ${mcp?.env?.NHANH_ACTOR} project ${mcp?.env?.NHANH_PROJECT}; prompt names them: ${prompt.includes('mcp__nhanh-run__digest')}`;
+  say({ type: 'assistant', message: { content: [{ type: 'text', text: mcpLine }] } });
   if (process.env.FAKE_SLEEP) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_SLEEP)));
   if (process.env.FAKE_NOT_LOGGED_IN) {
     say({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login', num_turns: 1 });

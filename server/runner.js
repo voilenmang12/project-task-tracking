@@ -51,6 +51,25 @@ export function trackerCli() {
   return file.includes(' ') ? `node "${file}"` : `node ${file}`;
 }
 
+/**
+ * The run's own MCP server, "nhanh-run": the tracker's tools, writing as the run's actor. Its own name keeps it apart
+ * from an "nhanh" server the user may have set up for their chats (which writes as another actor).
+ */
+export const RUN_MCP = 'nhanh-run';
+export function runMcpConfig(run, port) {
+  const installed = path.join(os.homedir(), '.claude', 'skills', 'nhanh-project-tracking', 'scripts', 'nhanh-mcp.mjs');
+  const own = fileURLToPath(new URL('../skills/nhanh-project-tracking/scripts/nhanh-mcp.mjs', import.meta.url));
+  return JSON.stringify({
+    mcpServers: {
+      [RUN_MCP]: {
+        command: process.execPath,
+        args: [fs.existsSync(installed) ? installed : own],
+        env: { NHANH_URL: `http://127.0.0.1:${port}`, NHANH_ACTOR: run.actor, NHANH_PROJECT: run.projectId },
+      },
+    },
+  });
+}
+
 /** What the lead session is told. The user's note is quoted as data. */
 export function runPrompt(run, workspace, cli = trackerCli()) {
   const p = workspace.projects.find((x) => x.id === run.projectId);
@@ -64,10 +83,11 @@ export function runPrompt(run, workspace, cli = trackerCli()) {
     '',
     'How to work:',
     `- Your tracker actor is ${run.actor} (NHANH_ACTOR is set). Follow the nhanh-project-tracking skill and this repository's CLAUDE.md.`,
-    `- Call the tracker with exactly \`${cli} <action> ...\`, one call per Bash command: no ";", "&&", pipes, "cd" or shell`,
-    '  variables around it, since only that exact command is approved for this run. Long or multi-line arguments go in',
-    "  --json '<object>'. Every other command and edit follows this repository's own permissions.",
-    `- Start with \`${cli} digest ${p.id}\`, then read the target (\`${cli} task.get taskId=...\`) and what it needs in the repository.`,
+    `- Talk to the tracker with the ${RUN_MCP} MCP tools (mcp__${RUN_MCP}__digest, mcp__${RUN_MCP}__task_start, ...): they write as`,
+    `  ${run.actor} and know the project. If they are missing, use the CLI: exactly \`${cli} <action> ...\`, one call per Bash`,
+    '  command (no ";", "&&", pipes, "cd" or shell variables around it; long arguments in --json \'<object>\'), since only that',
+    "  command is approved for this run. Every other command and edit follows this repository's own permissions.",
+    '- Start with digest, then read the target (task_get) and what it needs in the repository.',
     '- You lead this run. Make the branch by the repository\'s git rules (task/<slug>), `task.start` the task with that branch,',
     '  and split the work: an L task gets its sub-tasks in the tracker (task.add, reason "Split of <id>"); give each piece to',
     '  a subagent (Agent tool) with a clear brief and check what comes back. Only you write to the tracker, with',
@@ -77,7 +97,7 @@ export function runPrompt(run, workspace, cli = trackerCli()) {
     '- Report as you go (task.progress at each finished step) and close with task.done and its evidence. Commit, merge and',
     '  delete the branch as the repository\'s rules say.',
     run.target.kind === 'flow'
-      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task,\n  and digest again after each task.done, until the flow is finished, all that is left waits for others, or you are blocked.\n  Before you end, write the flow's overall report: \`${cli} flow.report --json '{"flowId":"${run.target.id}","text":"<Markdown>"}'\` (the skill's rules.md, "Flow report").`
+      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task,\n  and digest again after each task.done, until the flow is finished, all that is left waits for others, or you are blocked.\n  Before you end, write the flow's overall report: flow_report with flowId ${run.target.id} and the Markdown text (the skill's rules.md, "Flow report").`
       : '- Work on this task only. Work you find on the way goes into the tracker by the skill\'s rules, not into this run.',
     '- Nobody answers during the run. A decision that is the user\'s: task.ask with options and the default you continue with.',
     '  A hard stop (a missing asset, a failing tool, a command the permissions refuse, a sign-in): task.block saying what',
@@ -140,7 +160,11 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
     const cli = trackerCli();
     let child;
     try {
-      const args = ['-p', '--output-format', 'stream-json', '--verbose', '-n', `Nhánh ${run.id}: ${run.title}`, '--allowedTools', `Bash(${cli}:*)`];
+      const args = [
+        '-p', '--output-format', 'stream-json', '--verbose', '-n', `Nhánh ${run.id}: ${run.title}`,
+        '--allowedTools', `Bash(${cli}:*)`, `mcp__${RUN_MCP}`,
+        '--mcp-config', runMcpConfig(run, port),
+      ];
       child = spawn(command[0], [...command.slice(1), ...args], {
         cwd,
         env: runEnv(process.env, { NHANH_ACTOR: run.actor, NHANH_URL: `http://127.0.0.1:${port}`, NHANH_RUN: run.id }),

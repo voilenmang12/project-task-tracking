@@ -1,0 +1,902 @@
+[
+  {
+    "name": "projects.list",
+    "description": "Every project with its progress, what is being done and what waits for the user.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {},
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "project.get",
+    "description": "One project: its fields, brief, the whole item tree with status and progress, its flows, and the latest journal entries.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "events": "number"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "events": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "digest",
+    "description": "What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user's OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox).",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "attention",
+    "description": "Across all projects, what waits for the user (open questions, blocked tasks) and what the user wrote that no agent has picked up yet.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {},
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.get",
+    "description": "One item with its sub-items and its whole journal.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "runs.list",
+    "description": "Agent runs the user started from the tracker (newest last): target, actor, status, times, report.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string",
+      "limit": "number"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "limit": {
+          "type": "number"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "activity",
+    "description": "Across all projects, the agent sessions holding work now (chats in Claude Code, not tracker runs): actor, tasks in work, running flows, last write.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {},
+    "schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "events.list",
+    "description": "The journal, oldest first: who did what and when. Filter by project or task.",
+    "readOnly": true,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string",
+      "taskId": "string",
+      "limit": "number"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "limit": {
+          "type": "number"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "project.create",
+    "description": "Create a project. Give a stable id (for example \"cg01-mortalbound\") so a retry does not create a second one. review:true makes every item an agent adds wait for approval by the user before work starts on it.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "id": "string",
+      "title": "string (required)",
+      "description": "string",
+      "repo": "string",
+      "stage": "string",
+      "review": "boolean"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "stage": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "review": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "project.update",
+    "description": "Change a project's title, description, repo folder, lifecycle stage, brief (Markdown), review setting (review:true = items agents add wait for approval by the user), or archive it.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "title": "string",
+      "description": "string",
+      "repo": "string",
+      "stage": "string",
+      "brief": "string",
+      "archived": "boolean",
+      "review": "boolean"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "stage": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "brief": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "archived": {
+          "type": "boolean"
+        },
+        "review": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "projectId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "project.log",
+    "description": "One journal line on the project with no task behind it: a small (S) change that was made, or a session note.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "text": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "projectId",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "plan.apply",
+    "description": "Set up or extend the plan in one call. A node may carry after: [ids of items it runs after, in this call or already in the project] and afterMode (\"all\" or \"any\"). flow: {id?, title, nodes?: [ids]} also lays the work out as a flow (default nodes: the top-level nodes of this call); a flow an agent makes is a proposal: it waits for the user's OK in the web UI or in chat before anyone runs it. On a project with review on, new items wait for approval by the user (digest: awaitingReview) and cannot be started before. nodes: [{id, title, kind?, size?, description?, criteria?: [text], labels?, children?: [...]}]. An item with children is a group unless kind says otherwise. Items are matched by id: a new id is created, a known id gets its title, description, size and missing criteria updated. Nothing is ever deleted and no status changes, so the call is safe to repeat.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "nodes": "array (required)",
+      "note": "string",
+      "flow": "object"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "nodes": {
+          "type": "array"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "flow": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "projectId",
+        "nodes"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.add",
+    "description": "Add one item. From an agent it is work discovered while working, and \"reason\" (why it is needed, what revealed it) is required; it is shown to the user as added by the agent. From the user it is a request, and lands in the agents' inbox.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "parentId": "string",
+      "id": "string",
+      "title": "string (required)",
+      "kind": "string",
+      "size": "string",
+      "description": "string",
+      "criteria": "array",
+      "labels": "array",
+      "reason": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "parentId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "size": {
+          "type": "string",
+          "maxLength": 1
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "criteria": {
+          "type": "array"
+        },
+        "labels": {
+          "type": "array"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "projectId",
+        "title"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.update",
+    "description": "Edit an item: title, description, size, labels, the whole criteria list ([{id?, text, done?}]), or its order arrows: after = the ids of the tasks or groups it waits for, afterMode \"all\" (every one finished, the default) or \"any\" (one is enough). Refused when the arrows could never all be met. Not for status: use the task.* verbs.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "title": "string",
+      "description": "string",
+      "size": "string",
+      "labels": "array",
+      "criteria": "array",
+      "after": "array",
+      "afterMode": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "size": {
+          "type": "string",
+          "maxLength": 1
+        },
+        "labels": {
+          "type": "array"
+        },
+        "criteria": {
+          "type": "array"
+        },
+        "after": {
+          "type": "array"
+        },
+        "afterMode": {
+          "type": "string",
+          "maxLength": 3
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.move",
+    "description": "Move an item (with its sub-items) under another parent, or reorder it. parentId null = top level.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "parentId": "string",
+      "index": "number"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "parentId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "index": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.start",
+    "description": "Begin work on a task: it becomes \"doing\" and yours. branch = the git branch of the work; agent = the specialist doing it when the session delegates (for example \"gameplay-programmer\"). Fails with 409 when another agent is doing it, unless takeover:true.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "branch": "string",
+      "agent": "string",
+      "takeover": "boolean",
+      "userSaid": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "branch": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "agent": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "takeover": {
+          "type": "boolean"
+        },
+        "userSaid": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.progress",
+    "description": "Report progress on a task in work: a short note of what is now true, criteria that are now met (check: ids, 1-based numbers or texts), and criteria discovered on the way (addCriteria).",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "note": "string",
+      "check": "any",
+      "addCriteria": "array",
+      "agent": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "check": {},
+        "addCriteria": {
+          "type": "array"
+        },
+        "agent": {
+          "type": "string",
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.block",
+    "description": "The task cannot go on and it is not a question the user can answer in a line (a missing asset, a tool that fails, a dependency). Say what is missing and what would unblock it.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "reason": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "taskId",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.unblock",
+    "description": "The blocker is gone: the task goes back to \"doing\" (or \"todo\" when nobody owns it).",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "note": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.ask",
+    "description": "Put a decision to the user (a taste or business call, a try branch to keep or drop, an approval). The work goes on with a reversible default meanwhile; the answer arrives in the digest inbox.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "question": "string (required)",
+      "options": "array"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "options": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "taskId",
+        "question"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.ack",
+    "description": "An agent has read what the user wrote on this task (a new request, an answer, an unblock) and will act on it. Removes it from the inbox.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "note": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.done",
+    "description": "Close a task with proof. summary = what is now true for the player or the project. evidence = {commit, tests, report, screenshots, notes}: at least one for an M or L task. check = criteria met now (ids, numbers, texts). A criterion still unticked refuses the call unless \"unmet\" explains why it is closed without it. Sub-tasks must be done or dropped first.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "summary": "string (required)",
+      "evidence": "object",
+      "check": "any",
+      "unmet": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "evidence": {
+          "type": "object"
+        },
+        "check": {},
+        "unmet": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId",
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.reopen",
+    "description": "A done or dropped task is not finished after all (a regression, the user is not satisfied). It goes back to \"todo\".",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "reason": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.drop",
+    "description": "The item will not be done (cut from scope, replaced). It and its sub-items leave the progress numbers but stay visible with the reason.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "reason": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task.release",
+    "description": "Hand a task back unfinished: it becomes \"todo\" with no owner. Say in the note where the work stands.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "taskId": "string (required)",
+      "note": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "flow.create",
+    "description": "Create a flow: a canvas of tasks and groups joined by order arrows, which the user gives to one agent to run in order.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "projectId": "string (required)",
+      "id": "string",
+      "title": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "projectId",
+        "title"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "flow.update",
+    "description": "Change a flow: title, nodes ([{taskId, x, y}], the whole list), assignee (the actor that runs it; \"\" = any agent) or status: \"running\" (agents take its tasks in order), \"paused\" or \"draft\". An agent sets \"running\" only when the user said so in chat: pass their words in userSaid (recorded in the journal); that also approves the flow and its proposed items, and the flow becomes yours unless assignee says otherwise.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "flowId": "string (required)",
+      "title": "string",
+      "nodes": "array",
+      "assignee": "string",
+      "status": "string",
+      "userSaid": "string"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "nodes": {
+          "type": "array"
+        },
+        "assignee": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 10
+        },
+        "userSaid": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "required": [
+        "flowId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "flow.report",
+    "description": "The overall report of a flow, in Markdown, when its work ends or stops: what is now true, per task in one line each with its proof, what is blocked or waits for the user, the branches and commits, and what to plan next. Shown to the user and in the next digest.",
+    "readOnly": false,
+    "audience": "agent",
+    "arguments": {
+      "flowId": "string (required)",
+      "text": "string (required)"
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "flowId": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 20000
+        }
+      },
+      "required": [
+        "flowId",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
