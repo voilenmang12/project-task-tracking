@@ -6,6 +6,7 @@ import { call } from './api.js';
 import { childrenOf, descendantIds } from '../shared/model.js';
 import { askText, confirmAction } from './Dialog.jsx';
 import { INDENT } from './Composer.jsx';
+import { ACTIVE, RunButton, RunLine } from './Runs.jsx';
 import { approve, isPending, rejectProposal } from './review.js';
 import { Editable, EVENT_LABEL, StatusChip, actorName, clock, day, pct } from './ui.jsx';
 
@@ -163,7 +164,7 @@ function RunsAfter({ task, tasks, onChange, onOpenTask }) {
   );
 }
 
-export default function TaskPanel({ taskId, tasks = [], onClose, onError, onOpenTask }) {
+export default function TaskPanel({ taskId, tasks = [], runs = [], onClose, onError, onOpenTask }) {
   const [data, setData] = React.useState(null);
   const [newCriterion, setNewCriterion] = React.useState('');
   const [editing, setEditing] = React.useState(false);
@@ -250,6 +251,20 @@ export default function TaskPanel({ taskId, tasks = [], onClose, onError, onOpen
           {t.unmet && <p className="warn">Đóng khi chưa đạt: {t.unmet}</p>}
         </section>
       )}
+
+      {isTask && (() => {
+        const mine = runs.filter((r) => (r.target.kind === 'task' && r.target.id === t.id) || r.actor === t.owner).reverse();
+        const live = mine.some((r) => ACTIVE.includes(r.status));
+        const canRun = !live && !pending && t.status !== 'done' && t.status !== 'dropped' && !(t.status === 'doing' && t.owner && t.owner !== 'human');
+        return (
+          <section className="panel-section">
+            <h4>Chạy bằng agent</h4>
+            {mine.slice(0, 4).map((r) => <RunLine key={r.id} run={r} onError={onError} />)}
+            {canRun && <RunButton taskId={t.id} title={t.title} onError={onError} />}
+            {!canRun && !live && !mine.length && <p className="muted small">Chạy được khi việc chưa xong, đã duyệt và không có agent khác đang làm.</p>}
+          </section>
+        );
+      })()}
 
       {tasks.length > 0 && (
         <section className="panel-section">

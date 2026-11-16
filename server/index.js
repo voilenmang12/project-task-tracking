@@ -1,11 +1,14 @@
 // `npm start`: the API and the built web UI on http://127.0.0.1:5173 (PORT changes the port, NHANH_DATA_DIR the
 // data folder; default .local/ in this repo). One server per data folder.
+// Agent runs (server/runner.js) start `claude` (NHANH_CLAUDE: another command, as a JSON list) in the project's repo
+// folder, which is relative to NHANH_WORKSPACE (default: the folder that holds this repository).
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createService } from './service.js';
 import { acquireLock } from './lock.js';
+import { createRunner } from './runner.js';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(process.env.NHANH_DATA_DIR || path.join(repo, '.local'));
@@ -19,6 +22,14 @@ const TYPES = {
 const release = await acquireLock(root);
 const service = createService({ root });
 await service.store.read(); // fail now, not on the first request, when the data cannot be read
+const runner = createRunner({
+  service,
+  root,
+  port,
+  workspaceDir: path.resolve(process.env.NHANH_WORKSPACE || path.join(repo, '..')),
+  command: process.env.NHANH_CLAUDE ? JSON.parse(process.env.NHANH_CLAUDE) : ['claude'],
+});
+service.setRunner(runner);
 
 const server = http.createServer((req, res) => service.handle(req, res, async () => {
   try {
@@ -39,7 +50,10 @@ const server = http.createServer((req, res) => service.handle(req, res, async ()
 }));
 
 server.on('error', async (e) => { await release(); console.error(e.message); process.exitCode = 1; });
-server.listen(port, '127.0.0.1', () => console.log(`Tracker API + UI: http://127.0.0.1:${port}  (data: ${root})`));
+server.listen(port, '127.0.0.1', () => {
+  console.log(`Tracker API + UI: http://127.0.0.1:${port}  (data: ${root})`);
+  runner.recover(); // runs left from before a restart; queued ones start now
+});
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => { service.close(); server.close(async () => { await release(); process.exit(0); }); });
 }

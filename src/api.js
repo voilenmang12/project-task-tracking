@@ -46,3 +46,10 @@ export function subscribe(onChange, onStatus) {
   open();
   return () => { stopped = true; clearTimeout(retry); source?.close(); };
 }
+
+/** What an agent run printed since byte `from`: {text, size}. */
+export async function runLog(id, from = 0) {
+  const res = await fetch(`/api/run-log?id=${encodeURIComponent(id)}&from=${from}`, { headers: { 'X-Nhanh-Token': await session() } });
+  if (!res.ok) throw Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return res.json();
+}

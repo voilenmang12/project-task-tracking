@@ -3,6 +3,12 @@
 // the tag colours, claims and the v1 audit runs.
 import { emptyWorkspace } from '../shared/model.js';
 
+/** Tracker 2.2/2.3 data has no runs (2.4.0). Adds the empty list; nothing else changes. Returns null when not needed. */
+export function addRuns(w) {
+  if (Array.isArray(w.runs)) return null;
+  return { ...w, runs: [] };
+}
+
 /** Tracker 2.0 data has no flows (2.2.0). Adds the empty list; nothing else changes. Returns null when not needed. */
 export function addFlows(w) {
   if (Array.isArray(w.flows)) return null;

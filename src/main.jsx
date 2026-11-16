@@ -1,16 +1,18 @@
 // The web UI: a control room for one person running several agents.
 //   #/            Tổng quan: every project at a glance
+//   #/runs        Đang chạy: the Claude Code sessions the tracker started (Runs.jsx)
 //   #/inbox       Cần bạn: questions to answer, proposals to review, blocked work, requests not picked up yet
 //   #/p/<id>      one project: plan tree, flows (graph of order arrows), journal, notes; #/p/<id>/t/<taskId> opens an item
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import Markdown from 'react-markdown';
-import { Bell, Check, ChevronDown, ChevronRight, Flag, GitFork, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
+import { Activity, Bell, Check, ChevronDown, ChevronRight, Flag, GitFork, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
 import { call, subscribe } from './api.js';
 import { childrenOf, descendantIds } from '../shared/model.js';
 import TaskPanel, { Journal, QuestionBox } from './TaskPanel.jsx';
 import Composer from './Composer.jsx';
 import FlowView from './FlowView.jsx';
+import { ACTIVE, RunButton, RunLine, RunLogHost, RunsPage, runName, showRunLog } from './Runs.jsx';
 import { DialogHost, askText } from './Dialog.jsx';
 import { Bar, Editable, STAGE_LABEL, STATUS_LABEL, StatusIcon, actorName, pct, timeAgo } from './ui.jsx';
 import { approve, isPending, pendingRoots, rejectProposal } from './review.js';
@@ -19,6 +21,7 @@ import './style.css';
 const parseRoute = () => {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (parts[0] === 'inbox') return { view: 'inbox' };
+  if (parts[0] === 'runs') return { view: 'runs' };
   if (parts[0] === 'p' && parts[1]) return { view: 'project', projectId: parts[1], taskId: parts[2] === 't' ? parts[3] : null };
   return { view: 'home' };
 };
@@ -47,6 +50,7 @@ function App() {
   const reviewRoots = pendingRoots(attention.review || []);
   const needsYou = attention.questions.length + attention.blocked.length + reviewRoots.length;
   const active = (projects || []).filter((p) => !p.archived);
+  const running = active.reduce((n, p) => n + (p.summary.running || 0), 0);
 
   const newProject = async () => {
     const title = await askText({ title: 'Dự án mới', label: 'Tên dự án', placeholder: 'CG03 Tên game', required: true, confirmLabel: 'Tạo' });
@@ -61,6 +65,9 @@ function App() {
         <a className={`nav ${route.view === 'home' ? 'on' : ''}`} href="#/" title="Tổng quan"><LayoutGrid size={16} /> <span className="nav-label">Tổng quan</span></a>
         <a className={`nav ${route.view === 'inbox' ? 'on' : ''}`} href="#/inbox" title="Cần bạn">
           <Bell size={16} /> <span className="nav-label">Cần bạn</span> {needsYou > 0 && <span className="badge">{needsYou}</span>}
+        </a>
+        <a className={`nav ${route.view === 'runs' ? 'on' : ''}`} href="#/runs" title="Đang chạy">
+          <Activity size={16} /> <span className="nav-label">Đang chạy</span> {running > 0 && <span className="badge badge-run">{running}</span>}
         </a>
         <div className="side-title">Dự án</div>
         {active.map((p) => (
@@ -77,10 +84,12 @@ function App() {
       <main className="main">
         {error && <div className="toast" role="alert">{error}</div>}
         {projects === null ? <p className="muted pad">Đang tải…</p>
+          : route.view === 'runs' ? <RunsPage onError={onError} projectHref={(id, taskId) => `#${projectPath(id, taskId)}`} />
           : route.view === 'inbox' ? <Inbox attention={attention} reviewRoots={reviewRoots} onError={onError} />
           : route.view === 'project' ? <Project key={route.projectId} projectId={route.projectId} taskId={route.taskId} onError={onError} />
           : <Home projects={active} onNew={newProject} />}
       </main>
+      <RunLogHost onError={onError} />
       <DialogHost />
     </div>
   );
@@ -119,6 +128,7 @@ function Home({ projects, onNew }) {
                   : <span className="muted">Không có việc nào đang làm</span>}
               </div>
               <div className="card-foot">
+                {s.running > 0 && <span className="run-count"><span className="pulse" /> {s.running} nhánh đang chạy</span>}
                 {s.needsUser > 0 ? <span className="need">Cần bạn: {s.needsUser}{s.awaitingReview ? ` (${s.awaitingReview} chờ duyệt)` : ''}</span> : <span />}
                 <span className="muted">{s.lastEventAt ? `Hoạt động ${timeAgo(s.lastEventAt)}` : 'Chưa có hoạt động'}</span>
               </div>
@@ -231,7 +241,15 @@ function Project({ projectId, taskId, onError }) {
   const closeTask = React.useCallback(() => go(projectPath(projectId)), [projectId]);
   if (!data) return <p className="muted pad">Đang tải…</p>;
 
-  const { project: p, summary: s, tasks, events, flows = [] } = data;
+  const { project: p, summary: s, tasks, events, flows = [], runs = [] } = data;
+  // The live run behind each task: the one started for it, or a flow run whose session is doing it now.
+  const liveRuns = runs.filter((r) => ACTIVE.includes(r.status));
+  const runOfTask = new Map();
+  for (const r of liveRuns) if (r.target.kind === 'task') runOfTask.set(r.target.id, r);
+  for (const t of tasks) {
+    const r = liveRuns.find((x) => x.actor === t.owner);
+    if (r && t.status === 'doing') runOfTask.set(t.id, r);
+  }
   const match = FILTERS.find((f) => f[0] === filter)[2];
   // An item is shown when it or something below it matches the filter.
   const visible = new Set();
@@ -293,7 +311,7 @@ function Project({ projectId, taskId, onError }) {
       if (!visible.has(t.id)) continue;
       const kids = childrenOf(tasks, t.id).length > 0;
       rows.push(<Row key={t.id} t={t} depth={depth} hasKids={kids} closed={closed.has(t.id)} selected={t.id === taskId}
-        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} onBoard={onBoard?.has(t.id)} actions={rowActions} />);
+        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} onBoard={onBoard?.has(t.id)} run={runOfTask.get(t.id)} onError={onError} actions={rowActions} />);
       if (kids && !closed.has(t.id)) walk(t.id, depth + 1);
     }
   };
@@ -319,6 +337,11 @@ function Project({ projectId, taskId, onError }) {
               Duyệt trước việc agent thêm
             </label>
           </div>
+          {liveRuns.length > 0 && (
+            <div className="runs-now">
+              {liveRuns.map((r) => <RunLine key={r.id} run={r} onError={onError} />)}
+            </div>
+          )}
           <div className="tabs" role="tablist">
             {[['plan', 'Kế hoạch'], ['flow', `Luồng${flows.some((f) => f.state === 'running') ? ' ▶' : ''}`], ['journal', 'Nhật ký'], ['notes', 'Ghi chú']].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>{label}</button>
@@ -367,7 +390,7 @@ function Project({ projectId, taskId, onError }) {
               <div className="split-left" style={{ width: `${split * 100}%` }}>{planView}</div>
               <div className="splitter" role="separator" aria-orientation="vertical" aria-label="Kéo để đổi độ rộng" onPointerDown={onSplitDown} />
               <div className="split-right">
-                <FlowView projectId={projectId} tasks={tasks} flows={flows} flow={flow} onSelectFlow={setFlowId} events={events}
+                <FlowView projectId={projectId} tasks={tasks} flows={flows} flow={flow} onSelectFlow={setFlowId} events={events} runs={runs}
                   selectedTaskId={taskId} onOpenTask={openTask} onError={onError} />
               </div>
             </div>
@@ -376,12 +399,12 @@ function Project({ projectId, taskId, onError }) {
         {tab === 'journal' && <div className="pad-x"><Journal events={events} tasks={tasks} onOpenTask={openTask} /></div>}
         {tab === 'notes' && <Notes project={p} onError={onError} />}
       </div>
-      {taskId && <TaskPanel taskId={taskId} tasks={tasks} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
+      {taskId && <TaskPanel taskId={taskId} tasks={tasks} runs={runs} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
     </div>
   );
 }
 
-function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard, actions }) {
+function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard, run, onError, actions }) {
   const group = t.kind === 'group';
   const r = t.rollup;
   const openQuestion = t.question && !t.question.answer;
@@ -419,6 +442,11 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard,
         : <span className="caret" />}
       {group ? <Flag size={14} className="st muted" /> : <StatusIcon status={t.status} question={openQuestion} />}
       <span className="tr-title ellipsis">{t.title}</span>
+      {run && (
+        <button className="tag tag-running" title="Xem log" onClick={(e) => { e.stopPropagation(); showRunLog(run.id); }}>
+          <span className="pulse" /> {runName(run.id)} {run.status === 'queued' ? 'chờ lượt' : 'đang chạy'}
+        </button>
+      )}
       {onBoard && <span className="tag tag-board" title="Đã có trong luồng đang mở"><GitFork size={11} /> trong luồng</span>}
       {pending && (
         <>
@@ -432,6 +460,9 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard,
       {t.waitingOn?.length > 0 && t.status === 'todo' && <span className="tag tag-wait" title="Chạy sau khi các việc trước xong (xem Luồng hoặc chi tiết)">chờ {t.waitingOn.length} việc trước</span>}
       {t.labels?.slice(0, 2).map((l) => <span key={l} className="tag">{l}</span>)}
       <span className="tr-right">
+        {!group && !run && t.status === 'todo' && !pending && (
+          <span className="row-add"><RunButton small taskId={t.id} title={t.title} onError={onError} label="Chạy việc này bằng agent" /></span>
+        )}
         <button className="mini row-add" title={group ? 'Thêm việc vào mốc này' : 'Thêm việc con'} aria-label="Thêm bên trong" onClick={stop(actions.onAddInside)}><Plus size={14} /></button>
         {t.status === 'doing' && t.owner && <span className="owner">{actorName(t.owner)}</span>}
         {crit && !group && <span className="muted crit">{crit}</span>}

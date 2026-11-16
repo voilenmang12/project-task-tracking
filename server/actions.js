@@ -5,12 +5,15 @@
 // (plan.apply, task.start, task.progress, task.add, task.ask, task.block, task.done) and the tracker keeps the
 // state, the journal and the numbers consistent.
 import {
-  AFTER_MODES, FLOW_STATUSES, HUMAN, KINDS, SIZES, awaitingReview, childrenOf, descendantIds, flowState, hasDeadlock,
+  ACTIVE_RUN, AFTER_MODES, FLOW_STATUSES, HUMAN, RUN_STATUSES, KINDS, SIZES, awaitingReview, childrenOf, descendantIds, flowState, hasDeadlock,
   needsAgent, needsUser, nextTasks, projectSummary, rollup, waitingOn,
 } from '../shared/model.js';
 
 const MAX_EVENTS = 5000;
 const MAX_RECEIPTS = 1000;
+const MAX_RUNS = 300;
+/** The actor the run supervisor (server/runner.js) writes as. */
+export const RUNNER = 'tracker';
 const STAGES = ['idea', 'brief', 'gdd', 'playtest', 'production', 'release', 'live'];
 
 export class ActionError extends Error {
@@ -175,6 +178,7 @@ const ACTIONS = [
         summary: projectSummary(w, p.id),
         tasks: tasks.map((t) => view(w, t, roll)),
         flows: w.flows.filter((f) => f.projectId === p.id).map((f) => flowView(w, f)),
+        runs: w.runs.filter((r) => r.projectId === p.id).slice(-30),
         events: w.events.filter((e) => e.projectId === p.id).slice(-(a.events ?? 50)),
       };
     },
@@ -245,6 +249,15 @@ const ACTIONS = [
         children: childrenOf(tasks, t.id).map((c) => view(w, c, roll)),
         events: w.events.filter((e) => e.taskId === t.id),
       };
+    },
+  },
+  {
+    name: 'runs.list', read: true, args: { projectId: S(100), limit: NUM },
+    description: 'Agent runs the user started from the tracker (newest last): target, actor, status, times, report.',
+    run: ({ w }, a) => {
+      const title = new Map(w.projects.map((p) => [p.id, p.title]));
+      return w.runs.filter((r) => !a.projectId || r.projectId === a.projectId).slice(-(a.limit ?? 50))
+        .map((r) => ({ ...r, projectTitle: title.get(r.projectId) }));
     },
   },
   {
@@ -691,6 +704,102 @@ const ACTIONS = [
       c.w.flows = c.w.flows.filter((x) => x.id !== f.id);
       c.log('flow', f.projectId, null, `Flow deleted: ${f.title}`);
       return { deleted: f.id };
+    },
+  },
+  {
+    name: 'run.start', args: { taskId: S(100), flowId: S(100), note: S(4000) },
+    description: 'The user starts a Claude Code session on this machine for one task or one flow. The tracker runs it in the project repository, as actor "run-<n>"; it reports here like any agent. Only the user starts runs.',
+    run: (c, a) => {
+      if (!c.isHuman) fail('run.start: only the user starts runs', 403);
+      if (Boolean(a.taskId) === Boolean(a.flowId)) fail('run.start: give a taskId or a flowId');
+      let target;
+      let projectId;
+      let title;
+      if (a.taskId) {
+        const t = c.task(a.taskId);
+        if (t.kind !== 'task') fail('run.start: run a task, or put the group on a flow');
+        if (t.status === 'done' || t.status === 'dropped') fail(`run.start: the task is ${t.status}; reopen it first`);
+        if (c.underReview(t)) fail('run.start: approve the task first');
+        if (t.status === 'doing' && t.owner && t.owner !== HUMAN) fail(`run.start: ${t.owner} is doing this task`, 409);
+        target = { kind: 'task', id: t.id };
+        projectId = t.projectId;
+        title = t.title;
+      } else {
+        const fl = c.flow(a.flowId);
+        if (!fl.nodes.length) fail('run.start: the flow has no nodes');
+        target = { kind: 'flow', id: fl.id };
+        projectId = fl.projectId;
+        title = fl.title;
+      }
+      const p = c.project(projectId);
+      if (!p.repo) fail('run.start: the project has no repository folder (Ghi chú → repo)');
+      const busy = c.w.runs.find((r) => ACTIVE_RUN.includes(r.status) && r.target.kind === target.kind && r.target.id === target.id);
+      if (busy) fail(`run.start: ${busy.id} is already running this`, 409);
+      const n = c.w.runs.reduce((max, r) => Math.max(max, Number(r.id.split('-')[1]) || 0), 0) + 1;
+      const run = {
+        id: `run-${n}`, projectId, target, title, actor: `run-${n}`, repo: p.repo, note: a.note?.trim() || '',
+        status: 'queued', by: c.actor, createdAt: c.now, startedAt: null, endedAt: null,
+        pid: null, sessionId: null, exitCode: null, summary: '', error: '',
+      };
+      if (target.kind === 'flow') {
+        const fl = c.flow(target.id);
+        fl.assignee = run.actor;
+        fl.status = 'running';
+        fl.updatedAt = c.now;
+      }
+      c.w.runs.push(run);
+      if (c.w.runs.length > MAX_RUNS) c.w.runs.splice(0, c.w.runs.length - MAX_RUNS);
+      c.log('run', projectId, target.kind === 'task' ? target.id : null, `${run.id} queued: ${title}`);
+      return run;
+    },
+  },
+  {
+    name: 'run.stop', args: { runId: req(S(100)) },
+    description: 'The user stops a run: a queued one is dropped, a running one is ended.',
+    run: (c, a) => {
+      if (!c.isHuman) fail('run.stop: only the user stops runs', 403);
+      const r = c.w.runs.find((x) => x.id === a.runId) || fail(`Run "${a.runId}" not found`, 404);
+      if (!ACTIVE_RUN.includes(r.status)) return r;
+      r.status = r.status === 'queued' ? 'stopped' : 'stopping';
+      if (r.status === 'stopped') {
+        r.endedAt = c.now;
+        const fl = r.target.kind === 'flow' && c.w.flows.find((x) => x.id === r.target.id);
+        if (fl && fl.assignee === r.actor && fl.status === 'running') fl.status = 'paused';
+      }
+      c.log('run', r.projectId, r.target.kind === 'task' ? r.target.id : null, `${r.id} stopped by the user`);
+      return r;
+    },
+  },
+  {
+    name: 'run.report',
+    args: { runId: req(S(100)), status: S(20), pid: NUM, sessionId: S(200), summary: TEXT, error: S(4000), exitCode: NUM },
+    description: 'Internal: the run supervisor records what a run did. Not for agents.',
+    run: (c, a) => {
+      if (c.actor !== RUNNER) fail('run.report: only the tracker\'s run supervisor writes this', 403);
+      const r = c.w.runs.find((x) => x.id === a.runId) || fail(`Run "${a.runId}" not found`, 404);
+      for (const key of ['pid', 'sessionId', 'summary', 'error', 'exitCode']) if (a[key] !== undefined && a[key] !== null) r[key] = a[key];
+      if (a.status && a.status !== r.status) {
+        if (!RUN_STATUSES.includes(a.status)) fail(`status is one of ${RUN_STATUSES.join(', ')}`);
+        r.status = a.status;
+        if (a.status === 'running') r.startedAt = c.now;
+        if (!ACTIVE_RUN.includes(a.status)) {
+          r.endedAt = c.now;
+          // Nothing stays "doing" under a session that has ended, and its flow stops being handed out.
+          for (const t of c.w.tasks) {
+            if (t.owner === r.actor && t.status === 'doing') {
+              t.status = 'todo';
+              t.owner = null;
+              t.updatedAt = c.now;
+              c.log('released', t.projectId, t.id, `${r.id} ended before finishing this task`);
+            }
+          }
+          const fl = r.target.kind === 'flow' && c.w.flows.find((x) => x.id === r.target.id);
+          if (fl && fl.assignee === r.actor && fl.status === 'running') fl.status = 'paused';
+          const text = { done: 'finished', failed: `failed: ${r.error || `exit code ${r.exitCode}`}`, stopped: 'stopped', interrupted: 'interrupted (the tracker restarted)' }[a.status];
+          c.log('run', r.projectId, r.target.kind === 'task' ? r.target.id : null, `${r.id} ${text}${r.summary ? `\n${r.summary}` : ''}`);
+        }
+      }
+      return r;
     },
   },
   {
