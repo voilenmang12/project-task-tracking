@@ -31,6 +31,14 @@ Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đ�
 - **Duyệt việc agent thêm** (bật ở đầu trang dự án; dự án tạo trên web bật sẵn): mốc và việc agent thêm bằng
   `plan.apply` hoặc `task.add` hiện "chờ duyệt"; agent không bắt đầu chúng trước khi bạn bấm Duyệt (duyệt một mốc
   là duyệt cả các việc bên trong). Bỏ một đề xuất kèm lý do để agent đọc. Trước khi duyệt có thể sửa, sắp xếp lại.
+- **Dự án → Luồng**: bảng kéo-thả để chạy việc theo thứ tự, kể cả việc nằm ở các nhánh khác nhau của cây. Kéo việc
+  hoặc mốc từ danh sách bên trái vào bảng, kéo từ chấm tròn bên phải một ô sang ô khác để nối mũi tên "xong ô này
+  mới đến ô kia". Mũi tên từ một mốc nghĩa là chờ cả mốc xong. Ô có nhiều mũi tên vào mặc định chờ **tất cả**, bấm
+  nhãn trên ô để đổi thành **một trong**. Bấm mũi tên rồi Delete để xoá; nút lưới sắp xếp tự động. Điền "Giao cho"
+  (tên actor của agent, vd `claude-cg01`) rồi bấm **Chạy**: ở đầu mỗi phiên, digest của agent đó đưa ra việc kế tiếp
+  đã đủ điều kiện; agent khác không đụng vào việc của luồng. Tracker không tự khởi chạy agent.
+  Mũi tên thuộc về chính việc, nên vẫn có hiệu lực ngoài luồng: trong cây, việc đang chờ hiện "chờ N việc trước", và
+  mục "Chạy sau" trong chi tiết việc sửa được chúng.
 - **Nhật ký**: mọi thay đổi theo ngày: ai, lúc nào, làm gì, bằng chứng.
 - **Ghi chú**: Markdown của dự án (mục tiêu, phạm vi, liên kết tới GDD trong repo).
 
@@ -41,6 +49,10 @@ Trang tự cập nhật ngay khi agent ghi (server-sent events).
 - **Dự án**: `id`, tên, giai đoạn (`idea`, `brief`, `gdd`, `playtest`, `production`, `release`, `live`), ghi chú,
   `review` (bật: việc agent thêm chờ bạn duyệt).
 - **Nhóm** (mốc) chỉ chứa việc; trạng thái và tiến độ của nó tính từ các việc bên trong.
+- **Mũi tên thứ tự**: `after` (các việc hoặc mốc phải xong trước) và `afterMode` (`all` / `any`) trên mỗi việc hoặc mốc;
+  việc trong một mốc cũng chờ theo mũi tên của mốc. Việc đã bỏ không chặn ai. Mũi tên tạo vòng lặp bị từ chối.
+- **Luồng**: `id`, tên, các node `{taskId, x, y}`, người được giao (`assignee`), trạng thái `draft` / `running` /
+  `paused` (`done` được tính khi mọi việc của luồng đã xong).
 - **Việc**: cỡ `S`/`M`/`L`, trạng thái `todo` / `doing` / `blocked` / `done` / `dropped`, tiêu chí nghiệm thu,
   người làm (`owner`), chuyên gia (`agent`), nhánh git, kết quả và bằng chứng, câu hỏi cho bạn, nguồn gốc
   (`plan` / `user` / `agent` kèm lý do).
@@ -59,6 +71,7 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 | `task.start` / `task.progress` / `task.done` | Bắt đầu, báo tiến độ (tick tiêu chí), đóng kèm tóm tắt và bằng chứng |
 | `task.add` | Việc phát sinh; agent phải ghi lý do |
 | `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
+| `flow.create` / `flow.update` / `flow.delete` | Tạo luồng, sửa node, giao actor, chạy hoặc tạm dừng; chỉ bạn xoá luồng |
 | `task.approve` | Bạn duyệt mục agent đề xuất (cùng các mục bên trong và mốc phía trên); chỉ người dùng gọi được |
 | `task.block` / `task.unblock` / `task.release` / `task.reopen` / `task.drop` | Chặn, gỡ chặn, trả lại, mở lại, bỏ |
 | `project.log` | Một dòng nhật ký cho thay đổi nhỏ không cần task |

@@ -9,7 +9,7 @@ export const STAGE_LABEL = {
 export const EVENT_LABEL = {
   project: 'Dự án', plan: 'Lập kế hoạch', added: 'Thêm việc', edited: 'Sửa', started: 'Bắt đầu', progress: 'Tiến độ',
   blocked: 'Bị chặn', unblocked: 'Gỡ chặn', asked: 'Hỏi bạn', answered: 'Bạn trả lời', ack: 'Agent đã nhận', done: 'Xong',
-  approved: 'Bạn duyệt', reopened: 'Mở lại', dropped: 'Bỏ', released: 'Trả lại', deleted: 'Xoá', note: 'Ghi chú',
+  approved: 'Bạn duyệt', flow: 'Luồng', reopened: 'Mở lại', dropped: 'Bỏ', released: 'Trả lại', deleted: 'Xoá', note: 'Ghi chú',
 };
 const STATUS_ICON = { todo: Circle, doing: CircleDot, blocked: AlertTriangle, done: CheckCircle2, dropped: XCircle };
 

@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Records a project's plan, progress and proof in the Nhanh local tracker, where the user follows the work of autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # Nhánh project tracking
@@ -32,11 +32,14 @@ start a second server and never write its data files.
 
 1. **Start of a session: `nhanh digest <projectId>`.** It prints, in order: the inbox (what the user wrote that
    no agent has picked up: new requests, answers to questions, unblocks), the tasks in progress, the blocked ones,
-   what you proposed that the user has not approved yet (`AWAITING REVIEW`: never start those), and the next tasks
+   the **flows** the user gave you to run in order (`FLOW … YOURS`: take its `NEXT` task before anything else
+   in NEXT, then digest again for the following one, until the flow is finished or you are blocked), what you
+   proposed that the user has not approved yet (`AWAITING REVIEW`: never start those), and the next tasks
    in plan order. Deal with the inbox first: `task.start` what you take now, `task.ack` what
    you have read and will act on later. `NO PLAN YET` → set up the plan (below) before anything else.
 2. **Begin a task: `task.start taskId=… branch=task/<slug>`** (`agent=<specialist>` when you delegate it).
-   A 409 means another agent is doing it, or the task waits for the user's approval: take another task. `takeover=true` only for work that was abandoned.
+   A 409 means another agent is doing it, the task waits for the user's approval, or it runs after tasks that are
+   not finished yet: take another task. `takeover=true` only for work that was abandoned.
 3. **While working: `task.progress`** with a one-line note of what is now true and `check` for each criterion that
    is now met. Once per finished step, not per file edit.
 4. **End: `task.done`** with `summary`, `evidence` and the remaining criteria in `check`. Or `task.block`, or
@@ -50,6 +53,7 @@ Which tasks are tracked, how to write a plan, how to add work found on the way a
 | Situation | Action |
 |---|---|
 | The project has no plan | `plan.apply` with groups (milestones) and sized tasks with criteria; on a project with review on it waits for the user's approval, so say in your closing message that the plan is ready to review |
+| A flow is yours and running | Its `NEXT` tasks in the order shown, one after the other; never one marked `then` (it waits for others). A flow marked "not yours" or "paused": leave its tasks alone |
 | Everything left is awaiting review | Stop and say so in your closing message; do not start proposals, do not approve them (only the user does) |
 | A milestone is reached and the next one needs detail | `plan.apply` again with the same ids plus the new children |
 | The user asks in chat for work of size M or L that is not in the plan | `task.add` with `reason: "Asked by the user in session: …"`, then `task.start` |

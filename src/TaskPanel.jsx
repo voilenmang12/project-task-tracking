@@ -118,6 +118,51 @@ function Place({ task, tasks, onMove }) {
   );
 }
 
+/** The items this one runs after (its "after" arrows), and whether all of them or any one must be finished. */
+function RunsAfter({ task, tasks, onChange, onOpenTask }) {
+  const after = task.after || [];
+  const titleOf = (id) => tasks.find((t) => t.id === id)?.title || id;
+  const waiting = new Set(task.waitingOn || []);
+  const options = [];
+  const walk = (parentId, depth) => {
+    for (const t of childrenOf(tasks, parentId)) {
+      if (t.id === task.id || t.status === 'dropped') continue;
+      if (!after.includes(t.id)) options.push({ id: t.id, label: `${INDENT.repeat(depth)}${t.kind === 'group' ? '▸ ' : '· '}${t.title}` });
+      walk(t.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return (
+    <>
+      {after.length > 0 && (
+        <ul className="children">
+          {after.map((id) => (
+            <li key={id}>
+              <button className="link ellipsis" onClick={() => onOpenTask(id)}>{titleOf(id)}</button>
+              <span className="row">
+                <span className={`chip ${waiting.has(id) ? '' : 'chip-done'}`}>{waiting.has(id) ? 'chưa xong' : 'đã xong'}</span>
+                <button className="icon-btn" aria-label="Bỏ mũi tên" onClick={() => onChange({ after: after.filter((x) => x !== id) })}><X size={14} /></button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        <select className="select grow" value="" aria-label="Thêm việc phải xong trước" onChange={(e) => e.target.value && onChange({ after: [...after, e.target.value] })}>
+          <option value="">+ Chạy sau việc hoặc mốc…</option>
+          {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        {after.length > 1 && (
+          <select className="select" value={task.afterMode || 'all'} aria-label="Điều kiện" onChange={(e) => onChange({ afterMode: e.target.value })}>
+            <option value="all">khi tất cả xong</option>
+            <option value="any">khi một trong số đó xong</option>
+          </select>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function TaskPanel({ taskId, tasks = [], onClose, onError, onOpenTask }) {
   const [data, setData] = React.useState(null);
   const [newCriterion, setNewCriterion] = React.useState('');
@@ -210,6 +255,13 @@ export default function TaskPanel({ taskId, tasks = [], onClose, onError, onOpen
         <section className="panel-section">
           <h4>Vị trí <span className="muted normal">agent làm từ trên xuống</span></h4>
           <Place task={t} tasks={tasks} onMove={move} />
+        </section>
+      )}
+
+      {tasks.length > 0 && (
+        <section className="panel-section">
+          <h4>Chạy sau {t.waitingOn?.length > 0 && t.status === 'todo' && <span className="need normal">đang chờ {t.waitingOn.length}</span>}</h4>
+          <RunsAfter task={t} tasks={tasks} onOpenTask={onOpenTask} onChange={(change) => act('task.update', change)} />
         </section>
       )}
 

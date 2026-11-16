@@ -87,6 +87,17 @@ function digestText(d) {
     for (const t of list) { out.push(`  ${taskLine(t)}`); if (detail) out.push(...taskDetail(t)); }
   };
   section('INBOX — the user wrote this, no agent has picked it up (task.ack or task.start each)', d.inbox, true);
+  for (const f of d.flows || []) {
+    const owner = f.assignee ? `for ${f.assignee}` : 'for any agent';
+    const head = `FLOW ${f.id} "${f.title}" — ${f.status}, ${owner}, ${f.done}/${f.total} done`;
+    if (!f.mine) { out.push('', `${head} (not yours: leave its tasks alone)`); continue; }
+    if (f.status === 'paused') { out.push('', `${head} (paused by the user: do not take its tasks)`); continue; }
+    if (f.status === 'done') { out.push('', `${head} (finished)`); continue; }
+    out.push('', `${head}. YOURS: take its NEXT task first, in this order; when it is done, digest again for the next.`);
+    for (const t of f.doing) out.push(`  doing: ${taskLine(t)}`);
+    for (const t of f.next) { out.push(`  NEXT: ${taskLine(t)}`); out.push(...taskDetail(t)); }
+    for (const t of f.waiting) out.push(`  then: ${taskLine(t)} — waits for ${t.waitingOn.join(t.afterMode === 'any' ? ' or ' : ', ') || 'review or sub-tasks'}`);
+  }
   section('IN PROGRESS', d.doing, true);
   section('BLOCKED', d.blocked, true);
   section('WAITING FOR THE USER', d.waitingForUser.filter((t) => t.status !== 'blocked' && t.status !== 'doing'), true);

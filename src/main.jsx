@@ -1,7 +1,7 @@
 // The web UI: a control room for one person running several agents.
 //   #/            Tổng quan: every project at a glance
 //   #/inbox       Cần bạn: questions to answer, proposals to review, blocked work, requests not picked up yet
-//   #/p/<id>      one project: plan tree, journal, notes; #/p/<id>/t/<taskId> opens an item
+//   #/p/<id>      one project: plan tree, flows (graph of order arrows), journal, notes; #/p/<id>/t/<taskId> opens an item
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import Markdown from 'react-markdown';
@@ -10,6 +10,7 @@ import { call, subscribe } from './api.js';
 import { childrenOf, descendantIds } from '../shared/model.js';
 import TaskPanel, { Journal, QuestionBox } from './TaskPanel.jsx';
 import Composer from './Composer.jsx';
+import FlowView from './FlowView.jsx';
 import { DialogHost, askText } from './Dialog.jsx';
 import { Bar, Editable, STAGE_LABEL, STATUS_LABEL, StatusIcon, actorName, pct, timeAgo } from './ui.jsx';
 import { approve, isPending, pendingRoots, rejectProposal } from './review.js';
@@ -226,7 +227,7 @@ function Project({ projectId, taskId, onError }) {
   const closeTask = React.useCallback(() => go(projectPath(projectId)), [projectId]);
   if (!data) return <p className="muted pad">Đang tải…</p>;
 
-  const { project: p, summary: s, tasks, events } = data;
+  const { project: p, summary: s, tasks, events, flows = [] } = data;
   const match = FILTERS.find((f) => f[0] === filter)[2];
   // An item is shown when it or something below it matches the filter.
   const visible = new Set();
@@ -281,7 +282,7 @@ function Project({ projectId, taskId, onError }) {
   walk(null, 0);
 
   return (
-    <div className="project">
+    <div className={`project ${tab === 'flow' ? 'project-flow' : ''}`}>
       <div className="project-main">
         <header className="project-head">
           <div className="row">
@@ -301,7 +302,7 @@ function Project({ projectId, taskId, onError }) {
             </label>
           </div>
           <div className="tabs" role="tablist">
-            {[['plan', 'Kế hoạch'], ['journal', 'Nhật ký'], ['notes', 'Ghi chú']].map(([id, label]) => (
+            {[['plan', 'Kế hoạch'], ['flow', `Luồng${flows.some((f) => f.state === 'running') ? ' ▶' : ''}`], ['journal', 'Nhật ký'], ['notes', 'Ghi chú']].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={`tab ${tab === id ? 'on' : ''}`} onClick={() => setTab(id)}>{label}</button>
             ))}
           </div>
@@ -339,6 +340,7 @@ function Project({ projectId, taskId, onError }) {
               )}
           </>
         )}
+        {tab === 'flow' && <FlowView projectId={projectId} tasks={tasks} flows={flows} events={events} selectedTaskId={taskId} onOpenTask={openTask} onError={onError} />}
         {tab === 'journal' && <div className="pad-x"><Journal events={events} tasks={tasks} onOpenTask={openTask} /></div>}
         {tab === 'notes' && <Notes project={p} onError={onError} />}
       </div>
@@ -388,6 +390,7 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, actions 
       )}
       {!pending && t.origin === 'agent' && <span className="tag tag-agent" title={t.reason}>agent thêm</span>}
       {t.origin === 'user' && <span className="tag tag-user">bạn yêu cầu{t.needsAgent ? ' · chưa nhận' : ''}</span>}
+      {t.waitingOn?.length > 0 && t.status === 'todo' && <span className="tag tag-wait" title="Chạy sau khi các việc trước xong (xem Luồng hoặc chi tiết)">chờ {t.waitingOn.length} việc trước</span>}
       {t.labels?.slice(0, 2).map((l) => <span key={l} className="tag">{l}</span>)}
       <span className="tr-right">
         <button className="mini row-add" title={group ? 'Thêm việc vào mốc này' : 'Thêm việc con'} aria-label="Thêm bên trong" onClick={stop(actions.onAddInside)}><Plus size={14} /></button>
