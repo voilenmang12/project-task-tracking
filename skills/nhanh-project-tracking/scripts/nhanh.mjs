@@ -67,7 +67,8 @@ function taskLine(t) {
   const crit = t.criteria?.length ? ` ${t.criteria.filter((c) => c.done).length}/${t.criteria.length}` : '';
   const who = t.status === 'doing' && t.owner ? ` — ${t.owner}${t.branch ? ` on ${t.branch}` : ''}` : '';
   const origin = t.origin === 'user' ? ' (user request)' : t.origin === 'agent' ? ' (added by agent)' : '';
-  return `${MARK[t.status] || '○'} ${t.id}  ${t.title}${t.size ? ` [${t.size}]` : ''}${crit}${who}${origin}`;
+  const stopped = t.stopped && t.status === 'todo' ? ` (STOPPED by the user${t.stopped.reason ? `: ${t.stopped.reason}` : ''}; restart only on their word)` : '';
+  return `${MARK[t.status] || '○'} ${t.id}  ${t.title}${t.size ? ` [${t.size}]` : ''}${crit}${who}${origin}${stopped}`;
 }
 function taskDetail(t, indent = '    ') {
   const lines = [];

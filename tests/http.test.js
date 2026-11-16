@@ -101,6 +101,8 @@ test('the CLI talks to the server, prints short text and exits 1 on an error', a
     const failed = await cli('task.done', 'taskId=t', 'summary=Done');
     assert.equal(failed.code, 1);
     assert.match(failed.stderr, /criteria not met/);
+    assert.match((await cli('--actor', 'human', 'task.done', 'taskId=t', 'summary=Done', 'check=all')).stderr, /Stop it first/);
+    assert.equal((await cli('--actor', 'human', 'work.stop', 'taskId=t')).code, 0);
     assert.equal((await cli('--actor', 'human', 'task.done', 'taskId=t', 'summary=Done', 'check=all')).code, 0);
   } finally {
     await stop();

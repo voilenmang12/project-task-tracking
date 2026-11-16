@@ -6,7 +6,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import Markdown from 'react-markdown';
-import { Activity, Bell, Check, ChevronDown, ChevronRight, Flag, GitFork, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
+import { Activity, Bell, Check, Lock, ChevronDown, ChevronRight, Flag, GitFork, GripVertical, LayoutGrid, Plus, X } from 'lucide-react';
 import { call, subscribe } from './api.js';
 import { childrenOf, descendantIds } from '../shared/model.js';
 import TaskPanel, { Journal, QuestionBox } from './TaskPanel.jsx';
@@ -16,6 +16,7 @@ import { ACTIVE, RunButton, RunLine, RunLogHost, RunsPage, runName, showRunLog }
 import { DialogHost, askText } from './Dialog.jsx';
 import { Bar, Editable, STAGE_LABEL, STATUS_LABEL, StatusIcon, actorName, pct, timeAgo } from './ui.jsx';
 import { approve, isPending, pendingRoots, rejectProposal } from './review.js';
+import { handleLive } from './live.js';
 import './style.css';
 
 const parseRoute = () => {
@@ -37,7 +38,11 @@ function App() {
   const [attention, setAttention] = React.useState({ questions: [], blocked: [], pending: [], review: [], flows: [] });
   const [online, setOnline] = React.useState(true);
   const [error, setError] = React.useState('');
-  const onError = React.useCallback((e) => { setError(e.message); setTimeout(() => setError(''), 6000); }, []);
+  const onError = React.useCallback(function report(e) {
+    if (e?.live) { handleLive(e, report); return; } // work in progress: ask the user to stop it first
+    setError(e.message);
+    setTimeout(() => setError(''), 6000);
+  }, []);
 
   React.useEffect(() => {
     const onHash = () => setRoute(parseRoute());
@@ -270,6 +275,16 @@ function Project({ projectId, taskId, flowRoute, onError }) {
     const r = liveRuns.find((x) => x.actor === t.owner);
     if (r && t.status === 'doing') runOfTask.set(t.id, r);
   }
+  // Work in progress, which only its session changes: tasks in "doing", tasks of active runs, running flows.
+  const locked = new Map();
+  for (const t of tasks) if (t.status === 'doing' && t.owner && t.owner !== 'human') locked.set(t.id, `${actorName(t.owner)} đang làm`);
+  for (const id of runOfTask.keys()) if (!locked.has(id)) locked.set(id, `${runName(runOfTask.get(id).id)} đang chạy`);
+  for (const f of flows) {
+    if (f.status !== 'running' || f.state === 'done') continue;
+    for (const n of f.nodes) {
+      for (const id of [n.taskId, ...descendantIds(tasks, n.taskId)]) if (!locked.has(id)) locked.set(id, `trong luồng "${f.title}" đang chạy`);
+    }
+  }
   const match = FILTERS.find((f) => f[0] === filter)[2];
   // An item is shown when it or something below it matches the filter.
   const visible = new Set();
@@ -331,7 +346,7 @@ function Project({ projectId, taskId, flowRoute, onError }) {
       if (!visible.has(t.id)) continue;
       const kids = childrenOf(tasks, t.id).length > 0;
       rows.push(<Row key={t.id} t={t} depth={depth} hasKids={kids} closed={closed.has(t.id)} selected={t.id === taskId}
-        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} onBoard={onBoard?.has(t.id)} run={runOfTask.get(t.id)} onError={onError} actions={rowActions} />);
+        dragging={drag === t.id} dropZone={drop?.id === t.id ? drop.zone : null} onBoard={onBoard?.has(t.id)} run={runOfTask.get(t.id)} lock={locked.get(t.id)} onError={onError} actions={rowActions} />);
       if (kids && !closed.has(t.id)) walk(t.id, depth + 1);
     }
   };
@@ -420,7 +435,7 @@ function Project({ projectId, taskId, flowRoute, onError }) {
         {tab === 'journal' && <div className="pad-x"><Journal events={events} tasks={tasks} onOpenTask={openTask} /></div>}
         {tab === 'notes' && <Notes project={p} onError={onError} />}
       </div>
-      {taskId && <TaskPanel taskId={taskId} tasks={tasks} runs={runs} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
+      {taskId && <TaskPanel taskId={taskId} tasks={tasks} runs={runs} lock={locked.get(taskId)} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
     </div>
   );
 }
@@ -439,7 +454,7 @@ function SessionLine({ session, onOpenTask }) {
   );
 }
 
-function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard, run, onError, actions }) {
+function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard, run, lock, onError, actions }) {
   const group = t.kind === 'group';
   const r = t.rollup;
   const openQuestion = t.question && !t.question.answer;
@@ -477,6 +492,8 @@ function Row({ t, depth, hasKids, closed, selected, dragging, dropZone, onBoard,
         : <span className="caret" />}
       {group ? <Flag size={14} className="st muted" /> : <StatusIcon status={t.status} question={openQuestion} />}
       <span className="tr-title ellipsis">{t.title}</span>
+      {lock && <span className="lock" title={`Đang chạy (${lock}): dừng trước khi sửa`} aria-label={`Đang chạy: ${lock}`}><Lock size={12} /></span>}
+      {t.stopped && t.status === 'todo' && <span className="tag tag-stopped" title={t.stopped.reason || ''}>bạn đã dừng</span>}
       {run && (
         <button className="tag tag-running" title="Xem log" onClick={(e) => { e.stopPropagation(); showRunLog(run.id); }}>
           <span className="pulse" /> {runName(run.id)} {run.status === 'queued' ? 'chờ lượt' : 'đang chạy'}

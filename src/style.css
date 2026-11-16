@@ -355,6 +355,12 @@ textarea.input { resize: vertical; font-family: inherit; }
 .report-table td:nth-child(2) { width: 34%; }
 .report-proof { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 
+/* work in progress: locked until stopped */
+.lock { color: var(--doing); flex: none; }
+.tag-stopped { background: var(--ask-soft); color: var(--ask); }
+.lock-box { display: flex; gap: 10px; align-items: center; background: var(--doing-soft); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.stopped-note { background: var(--ask-soft); border-radius: 8px; padding: 6px 10px; }
+
 @media (max-width: 1100px) {
   .app { grid-template-columns: 64px 1fr; }
   .side .grow, .side .muted, .side .nav-label, .brand, .side-title, .conn, .nav-add { display: none; }

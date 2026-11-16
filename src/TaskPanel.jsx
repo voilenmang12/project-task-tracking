@@ -164,7 +164,7 @@ function RunsAfter({ task, tasks, onChange, onOpenTask }) {
   );
 }
 
-export default function TaskPanel({ taskId, tasks = [], runs = [], onClose, onError, onOpenTask }) {
+export default function TaskPanel({ taskId, tasks = [], runs = [], lock, onClose, onError, onOpenTask }) {
   const [data, setData] = React.useState(null);
   const [newCriterion, setNewCriterion] = React.useState('');
   const [editing, setEditing] = React.useState(false);
@@ -236,6 +236,17 @@ export default function TaskPanel({ taskId, tasks = [], runs = [], onClose, onEr
       )}
 
       <QuestionBox task={t} onError={onError} />
+      {lock && (
+        <div className="lock-box">
+          <span className="grow"><strong>Đang chạy</strong> ({lock}). Muốn sửa, chuyển, bỏ hay xoá thì dừng trước.</span>
+          <button className="btn btn-danger-solid" onClick={() => call('work.stop', { taskId: t.id, reason: 'Stopped by the user from the task panel' }).catch(onError)}>Dừng</button>
+        </div>
+      )}
+      {t.stopped && t.status === 'todo' && (
+        <div className="muted small stopped-note">
+          Bạn đã dừng việc này lúc {clock(t.stopped.at)} (khi {actorName(t.stopped.owner)} đang làm). Agent chỉ làm tiếp khi bạn bấm Chạy hoặc bảo nó trong chat.
+        </div>
+      )}
       {t.status === 'blocked' && (
         <div className="blocked-box">
           <strong>Bị chặn:</strong> {t.blockedReason || '(không ghi lý do)'}
@@ -255,7 +266,7 @@ export default function TaskPanel({ taskId, tasks = [], runs = [], onClose, onEr
       {isTask && (() => {
         const mine = runs.filter((r) => (r.target.kind === 'task' && r.target.id === t.id) || r.actor === t.owner).reverse();
         const live = mine.some((r) => ACTIVE.includes(r.status));
-        const canRun = !live && !pending && t.status !== 'done' && t.status !== 'dropped' && !(t.status === 'doing' && t.owner && t.owner !== 'human');
+        const canRun = !live && !lock && !pending && t.status !== 'done' && t.status !== 'dropped' && !(t.status === 'doing' && t.owner && t.owner !== 'human');
         return (
           <section className="panel-section">
             <h4>Chạy bằng agent</h4>

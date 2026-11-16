@@ -21,7 +21,7 @@ export function createService({ root = path.resolve('.local') } = {}) {
   async function call(name, args, options = {}) {
     const outcome = await store.transact((draft) => runAction(draft, name, args, options));
     if (outcome.changed) for (const res of streams) res.write(`event: change\ndata: ${outcome.seq}\n\n`);
-    if (outcome.changed && runner && (name === 'run.start' || name === 'run.stop')) runner.kick();
+    if (outcome.changed && runner && (name === 'run.start' || name === 'run.stop' || name === 'work.stop')) runner.kick();
     return { seq: outcome.seq, result: outcome.result };
   }
 
@@ -73,7 +73,7 @@ export function createService({ root = path.resolve('.local') } = {}) {
       }
       return send(404, { error: 'No such endpoint.' });
     } catch (e) {
-      return send(e.status || (e instanceof SyntaxError ? 400 : 500), { error: e.message });
+      return send(e.status || (e instanceof SyntaxError ? 400 : 500), { error: e.message, ...(e.details || {}) });
     }
   }
 
