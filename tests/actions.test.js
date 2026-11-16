@@ -184,3 +184,48 @@ test('a v1 workspace migrates: tree, done state, notes, tag names and the design
   assert.equal(get('c').status, 'doing');
   assert.equal(rollup(w.tasks).a.progress, 0.5);
 });
+
+test('on a project with review on, what an agent proposes waits for the user before work starts', () => {
+  const { w, run } = workspace();
+  run('project.update', { projectId: 'g', review: true }, USER);
+  run('plan.apply', { projectId: 'g', nodes: [{ id: 'm3', title: 'Shop', children: [{ id: 'buy', title: 'Buy button', size: 'M' }] }] });
+  const added = run('task.add', { projectId: 'g', parentId: 'm1', title: 'Fix input lag', reason: 'Found while testing' });
+  const byId = (id) => w.tasks.find((t) => t.id === id);
+  assert.equal(byId('m3').review, 'pending');
+  assert.equal(byId('buy').review, 'pending');
+  assert.equal(added.review, 'pending');
+  assert.equal(byId('move').review, null, 'items from before review was turned on are not affected');
+
+  const digest = run('digest', { projectId: 'g' });
+  assert.deepEqual(digest.awaitingReview.map((t) => t.id).sort(), ['buy', added.id, 'm3'].sort());
+  assert.ok(!digest.next.some((t) => t.id === 'buy' || t.id === added.id), 'proposals are not offered as next tasks');
+  assert.equal(run('attention', {}).review.length, 3);
+  assert.equal(projectSummary(w, 'g').awaitingReview, 3);
+
+  rejects(() => run('task.start', { taskId: 'buy' }), /waits for the user's approval/, 409);
+  rejects(() => run('task.approve', { taskId: 'buy' }), /only the user/, 403);
+
+  // Approving a task approves the groups above it; approving a group approves what is under it.
+  const ok = run('task.approve', { taskId: 'buy' }, USER);
+  assert.deepEqual(ok.approved.sort(), ['buy', 'm3']);
+  run('task.start', { taskId: 'buy' });
+  assert.equal(byId('buy').status, 'doing');
+
+  // A rejected proposal is dropped; it leaves the review list.
+  run('task.drop', { taskId: added.id, reason: 'Not now' }, USER);
+  assert.equal(run('digest', { projectId: 'g' }).awaitingReview.length, 0);
+
+  // What the user adds is never pending.
+  assert.equal(run('task.add', { projectId: 'g', title: 'Mine' }, USER).review, null);
+  assert.equal(w.events.filter((e) => e.type === 'approved').length, 1);
+  validateWorkspace(w);
+});
+
+test('a project created with review on, and review off by default', () => {
+  const w = emptyWorkspace();
+  const run = (name, args, options = AGENT) => runAction(w, name, args, options).result;
+  assert.equal(run('project.create', { id: 'a', title: 'A' }).review, false);
+  assert.equal(run('project.create', { id: 'b', title: 'B', review: true }, USER).review, true);
+  run('task.add', { projectId: 'a', title: 'Free', reason: 'r' });
+  assert.equal(w.tasks[0].review, null);
+});

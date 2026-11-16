@@ -1,8 +1,12 @@
 // The side panel of one item: what it is, where it stands, the proof, the question for the user and its journal.
 import React from 'react';
 import Markdown from 'react-markdown';
-import { GitBranch, Plus, RotateCcw, Trash2, X, XCircle } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, GitBranch, Plus, RotateCcw, Trash2, X, XCircle } from 'lucide-react';
 import { call } from './api.js';
+import { childrenOf, descendantIds } from '../shared/model.js';
+import { askText, confirmAction } from './Dialog.jsx';
+import { INDENT } from './Composer.jsx';
+import { approve, isPending, rejectProposal } from './review.js';
 import { Editable, EVENT_LABEL, StatusChip, actorName, clock, day, pct } from './ui.jsx';
 
 const EVIDENCE_LABEL = { commit: 'Commit', tests: 'Test', report: 'Báo cáo', screenshots: 'Ảnh chụp', notes: 'Ghi chú' };
@@ -86,7 +90,35 @@ function Evidence({ evidence }) {
   );
 }
 
-export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
+/** Where an item sits: its parent (any milestone or task that may hold it) and its place among its siblings. */
+function Place({ task, tasks, onMove }) {
+  const below = descendantIds(tasks, task.id);
+  const options = [];
+  const walk = (parentId, depth) => {
+    for (const t of childrenOf(tasks, parentId)) {
+      if (t.id === task.id || below.has(t.id) || t.status === 'dropped') continue;
+      if (task.kind === 'group' && t.kind !== 'group') continue;
+      options.push({ id: t.id, label: `${INDENT.repeat(depth)}${t.kind === 'group' ? '▸ ' : '· '}${t.title}` });
+      walk(t.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  const siblings = childrenOf(tasks, task.parentId);
+  const at = siblings.findIndex((t) => t.id === task.id);
+  return (
+    <div className="row place">
+      <select className="select grow" value={task.parentId || ''} aria-label="Nằm trong"
+        onChange={(e) => onMove({ parentId: e.target.value || null, index: undefined })}>
+        <option value="">— Cấp cao nhất —</option>
+        {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+      </select>
+      <button className="icon-btn" aria-label="Lên" title="Lên (làm trước)" disabled={at <= 0} onClick={() => onMove({ parentId: task.parentId, index: at - 1 })}><ArrowUp size={16} /></button>
+      <button className="icon-btn" aria-label="Xuống" title="Xuống (làm sau)" disabled={at < 0 || at >= siblings.length - 1} onClick={() => onMove({ parentId: task.parentId, index: at + 1 })}><ArrowDown size={16} /></button>
+    </div>
+  );
+}
+
+export default function TaskPanel({ taskId, tasks = [], onClose, onError, onOpenTask }) {
   const [data, setData] = React.useState(null);
   const [newCriterion, setNewCriterion] = React.useState('');
   const [editing, setEditing] = React.useState(false);
@@ -97,9 +129,30 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
 
   const { task: t, children, events } = data;
   const act = (name, args = {}) => call(name, { taskId: t.id, ...args }).catch(onError);
-  const reason = (label) => window.prompt(label)?.trim();
   const setCriteria = (criteria) => act('task.update', { criteria });
   const isTask = t.kind === 'task';
+  const pending = isPending(t);
+  const unblock = async () => {
+    const note = await askText({ title: 'Gỡ chặn', label: 'Đã gỡ chặn bằng cách nào? (agent sẽ đọc)', confirmLabel: 'Gỡ chặn' });
+    if (note !== null) act('task.unblock', { note: note || undefined });
+  };
+  const markDone = async () => {
+    const summary = await askText({ title: 'Đánh dấu xong', label: 'Tóm tắt kết quả', multiline: true, required: true, confirmLabel: 'Xong' });
+    if (summary) act('task.done', { summary, check: 'all' });
+  };
+  const reopen = async () => {
+    const why = await askText({ title: 'Mở lại', label: 'Vì sao mở lại? (agent sẽ đọc)', required: true, confirmLabel: 'Mở lại' });
+    if (why) act('task.reopen', { reason: why });
+  };
+  const drop = async () => {
+    const why = await askText({ title: 'Bỏ việc này', text: 'Việc và các mục bên trong thành "Đã bỏ", không tính vào tiến độ nhưng vẫn hiện kèm lý do.', label: 'Vì sao bỏ?', required: true, confirmLabel: 'Bỏ', danger: true });
+    if (why) act('task.drop', { reason: why });
+  };
+  const remove = async () => {
+    const ok = await confirmAction({ title: 'Xoá hẳn', text: `Xoá hẳn "${t.title}" và các mục bên trong? Không hoàn tác được; muốn giữ lại dấu vết thì dùng "Bỏ".`, confirmLabel: 'Xoá hẳn', danger: true });
+    if (ok) act('task.delete').then(onClose);
+  };
+  const move = (place) => call('task.move', { taskId: t.id, parentId: place.parentId, index: place.index }).catch(onError);
 
   return (
     <aside className="panel" aria-label="Chi tiết">
@@ -125,11 +178,22 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
         {ORIGIN_LABEL[t.origin]}{t.reason ? `: ${t.reason}` : ''}
       </div>
 
+      {pending && (
+        <div className="review-box">
+          <strong>{actorName(t.createdBy)} đề xuất {isTask ? 'việc' : 'mốc'} này, chờ bạn duyệt.</strong>
+          <span className="muted small">Agent không bắt đầu trước khi bạn duyệt. Có thể sửa tiêu đề, cỡ, tiêu chí trước khi duyệt.</span>
+          <div className="row">
+            <button className="btn btn-approve" onClick={() => approve([t]).catch(onError)}><Check size={14} /> Duyệt{children.length ? ' cả mục bên trong' : ''}</button>
+            <button className="btn" onClick={() => rejectProposal(t).catch(onError)}><X size={14} /> Bỏ đề xuất</button>
+          </div>
+        </div>
+      )}
+
       <QuestionBox task={t} onError={onError} />
       {t.status === 'blocked' && (
         <div className="blocked-box">
           <strong>Bị chặn:</strong> {t.blockedReason || '(không ghi lý do)'}
-          <div><button className="btn" onClick={() => act('task.unblock', { note: reason('Đã gỡ chặn bằng cách nào? (agent sẽ đọc)') || undefined })}>Đã gỡ chặn</button></div>
+          <div><button className="btn" onClick={unblock}>Đã gỡ chặn</button></div>
         </div>
       )}
 
@@ -139,6 +203,13 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
           <p>{t.summary || '(không có tóm tắt)'}</p>
           {t.evidence && <Evidence evidence={t.evidence} />}
           {t.unmet && <p className="warn">Đóng khi chưa đạt: {t.unmet}</p>}
+        </section>
+      )}
+
+      {tasks.length > 0 && (
+        <section className="panel-section">
+          <h4>Vị trí <span className="muted normal">agent làm từ trên xuống</span></h4>
+          <Place task={t} tasks={tasks} onMove={move} />
         </section>
       )}
 
@@ -155,10 +226,9 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
           <ul className="criteria">
             {t.criteria.map((c) => (
               <li key={c.id}>
-                <label>
-                  <input type="checkbox" checked={c.done} onChange={() => setCriteria(t.criteria.map((x) => (x.id === c.id ? { ...x, done: !x.done } : x)))} />
-                  <span className={c.done ? 'crit-done' : ''}>{c.text}</span>
-                </label>
+                <input type="checkbox" checked={c.done} aria-label={c.done ? 'Bỏ đánh dấu' : 'Đánh dấu đạt'} onChange={() => setCriteria(t.criteria.map((x) => (x.id === c.id ? { ...x, done: !x.done } : x)))} />
+                <Editable className={`crit-text ${c.done ? 'crit-done' : ''}`} value={c.text}
+                  onSave={(text) => text && setCriteria(t.criteria.map((x) => (x.id === c.id ? { ...x, text } : x)))} />
                 <button className="icon-btn subtle" aria-label="Xoá tiêu chí" onClick={() => setCriteria(t.criteria.filter((x) => x.id !== c.id))}><X size={14} /></button>
               </li>
             ))}
@@ -169,6 +239,12 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
           </form>
         </section>
       )}
+
+      <section className="panel-section">
+        <h4>Nhãn</h4>
+        <Editable className="labels-edit" value={(t.labels || []).join(', ')} placeholder="Thêm nhãn, cách nhau bằng dấu phẩy"
+          onSave={(text) => act('task.update', { labels: text.split(',').map((x) => x.trim()).filter(Boolean) })} />
+      </section>
 
       {children.length > 0 && (
         <section className="panel-section">
@@ -188,15 +264,15 @@ export default function TaskPanel({ taskId, onClose, onError, onOpenTask }) {
 
       <footer className="panel-actions">
         {isTask && t.status !== 'done' && t.status !== 'dropped' && (
-          <button className="btn" onClick={() => { const s = reason('Tóm tắt kết quả (bạn tự đánh dấu xong):'); if (s) act('task.done', { summary: s, check: 'all' }); }}>Đánh dấu xong</button>
+          <button className="btn" onClick={markDone}><Check size={14} /> Đánh dấu xong</button>
         )}
         {(t.status === 'done' || t.status === 'dropped') && (
-          <button className="btn" onClick={() => { const r = reason('Vì sao mở lại? (agent sẽ đọc)'); if (r) act('task.reopen', { reason: r }); }}><RotateCcw size={14} /> Mở lại</button>
+          <button className="btn" onClick={reopen}><RotateCcw size={14} /> Mở lại</button>
         )}
         {t.status !== 'dropped' && t.status !== 'done' && (
-          <button className="btn" onClick={() => { const r = reason('Vì sao bỏ việc này?'); if (r) act('task.drop', { reason: r }); }}><XCircle size={14} /> Bỏ</button>
+          <button className="btn" onClick={drop}><XCircle size={14} /> Bỏ</button>
         )}
-        <button className="btn btn-danger" onClick={() => window.confirm(`Xoá hẳn "${t.title}" và các việc con?`) && act('task.delete').then(onClose)}><Trash2 size={14} /> Xoá</button>
+        <button className="btn btn-danger" onClick={remove}><Trash2 size={14} /> Xoá</button>
       </footer>
     </aside>
   );

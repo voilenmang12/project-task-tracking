@@ -21,10 +21,16 @@ Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đ�
 
 - **Tổng quan**: mỗi dự án một thẻ: giai đoạn, tiến độ, số việc theo trạng thái, việc đang làm và ai làm, số việc
   cần bạn, hoạt động gần nhất.
-- **Cần bạn**: câu hỏi agent gửi (trả lời ngay tại chỗ), việc bị chặn, và những gì bạn đã gửi mà agent chưa nhận.
+- **Cần bạn**: câu hỏi agent gửi (trả lời ngay tại chỗ), mốc và việc agent đề xuất chờ bạn duyệt, việc bị chặn, và
+  những gì bạn đã gửi mà agent chưa nhận.
 - **Dự án → Kế hoạch**: cây mốc → việc → việc con, có trạng thái, cỡ S/M/L, người làm, tiêu chí đã đạt, nhãn
-  "agent thêm" / "bạn yêu cầu". Ô trên cùng để gõ yêu cầu mới cho agent. Bấm một việc để mở chi tiết: mô tả, tiêu
-  chí nghiệm thu, kết quả và bằng chứng, câu hỏi, nhật ký.
+  "agent thêm" / "bạn yêu cầu" / "chờ duyệt". Ô trên cùng thêm việc hoặc mốc: Enter để thêm nhanh, "Chi tiết" để
+  chọn chỗ đặt, cỡ, mô tả, tiêu chí, nhãn. Nút "+" trên mỗi dòng thêm việc vào bên trong. Kéo-thả một dòng để đổi
+  thứ tự hoặc chuyển mốc (Alt+↑/↓ với bàn phím); agent làm theo thứ tự từ trên xuống. Bấm một việc để mở chi tiết:
+  vị trí, mô tả, tiêu chí (sửa tại chỗ), nhãn, kết quả và bằng chứng, câu hỏi, nhật ký.
+- **Duyệt việc agent thêm** (bật ở đầu trang dự án; dự án tạo trên web bật sẵn): mốc và việc agent thêm bằng
+  `plan.apply` hoặc `task.add` hiện "chờ duyệt"; agent không bắt đầu chúng trước khi bạn bấm Duyệt (duyệt một mốc
+  là duyệt cả các việc bên trong). Bỏ một đề xuất kèm lý do để agent đọc. Trước khi duyệt có thể sửa, sắp xếp lại.
 - **Nhật ký**: mọi thay đổi theo ngày: ai, lúc nào, làm gì, bằng chứng.
 - **Ghi chú**: Markdown của dự án (mục tiêu, phạm vi, liên kết tới GDD trong repo).
 
@@ -32,7 +38,8 @@ Trang tự cập nhật ngay khi agent ghi (server-sent events).
 
 ## Mô hình
 
-- **Dự án**: `id`, tên, giai đoạn (`idea`, `brief`, `gdd`, `playtest`, `production`, `release`, `live`), ghi chú.
+- **Dự án**: `id`, tên, giai đoạn (`idea`, `brief`, `gdd`, `playtest`, `production`, `release`, `live`), ghi chú,
+  `review` (bật: việc agent thêm chờ bạn duyệt).
 - **Nhóm** (mốc) chỉ chứa việc; trạng thái và tiến độ của nó tính từ các việc bên trong.
 - **Việc**: cỡ `S`/`M`/`L`, trạng thái `todo` / `doing` / `blocked` / `done` / `dropped`, tiêu chí nghiệm thu,
   người làm (`owner`), chuyên gia (`agent`), nhánh git, kết quả và bằng chứng, câu hỏi cho bạn, nguồn gốc
@@ -52,6 +59,7 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 | `task.start` / `task.progress` / `task.done` | Bắt đầu, báo tiến độ (tick tiêu chí), đóng kèm tóm tắt và bằng chứng |
 | `task.add` | Việc phát sinh; agent phải ghi lý do |
 | `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
+| `task.approve` | Bạn duyệt mục agent đề xuất (cùng các mục bên trong và mốc phía trên); chỉ người dùng gọi được |
 | `task.block` / `task.unblock` / `task.release` / `task.reopen` / `task.drop` | Chặn, gỡ chặn, trả lại, mở lại, bỏ |
 | `project.log` | Một dòng nhật ký cho thay đổi nhỏ không cần task |
 
