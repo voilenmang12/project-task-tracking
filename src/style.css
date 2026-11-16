@@ -321,6 +321,7 @@ textarea.input { resize: vertical; font-family: inherit; }
 .run-queued { background: var(--hover); color: var(--muted); }
 .run-running, .run-stopping { background: var(--doing-soft); color: var(--doing); }
 .run-done { background: var(--done-soft); color: var(--done); }
+.run-unfinished { background: var(--ask-soft); color: var(--ask); }
 .run-failed, .run-interrupted { background: var(--blocked-soft); color: var(--blocked); }
 .run-queued .pulse { background: var(--muted); }
 .run-line { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); margin-bottom: 6px; }

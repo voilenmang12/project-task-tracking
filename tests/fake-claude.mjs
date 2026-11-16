@@ -7,6 +7,8 @@ process.stdin.on('end', async () => {
   say({ type: 'system', subtype: 'init', session_id: 'fake-session', model: 'fake', cwd: process.cwd() });
   say({ type: 'assistant', message: { content: [{ type: 'text', text: `Actor ${process.env.NHANH_ACTOR}; ${prompt.includes('Run the task') ? 'task' : 'flow'}` }] } });
   say({ type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'git checkout -b task/x' } }] } });
+  const allowed = process.argv[process.argv.indexOf('--allowedTools') + 1] || '';
+  say({ type: 'assistant', message: { content: [{ type: 'text', text: `allowed=${allowed}; prompt uses it: ${prompt.includes(allowed.slice(5, -3))}` }] } });
   if (process.env.FAKE_SLEEP) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_SLEEP)));
   if (process.env.FAKE_NOT_LOGGED_IN) {
     say({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login', num_turns: 1 });

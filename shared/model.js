@@ -12,7 +12,8 @@ export const HUMAN = 'human';
 export const FLOW_STATUSES = ['draft', 'running', 'paused'];
 export const AFTER_MODES = ['all', 'any'];
 // A run is one Claude Code session the tracker starts for a task or a flow (server/runner.js).
-export const RUN_STATUSES = ['queued', 'running', 'stopping', 'done', 'failed', 'stopped', 'interrupted'];
+// "unfinished": the session ended normally but its task or flow is not done (blocked, a question, a refusal).
+export const RUN_STATUSES = ['queued', 'running', 'stopping', 'done', 'unfinished', 'failed', 'stopped', 'interrupted'];
 export const ACTIVE_RUN = ['queued', 'running', 'stopping'];
 
 // Relative weight of a task in progress numbers. An unsized task counts as M.

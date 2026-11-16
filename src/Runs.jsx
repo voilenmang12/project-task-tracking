@@ -8,7 +8,7 @@ import { timeAgo } from './ui.jsx';
 
 export const ACTIVE = ['queued', 'running', 'stopping'];
 export const RUN_LABEL = {
-  queued: 'Chờ lượt', running: 'Đang chạy', stopping: 'Đang dừng', done: 'Xong', failed: 'Lỗi', stopped: 'Đã dừng', interrupted: 'Bị ngắt',
+  queued: 'Chờ lượt', running: 'Đang chạy', stopping: 'Đang dừng', done: 'Xong', unfinished: 'Chưa xong', failed: 'Lỗi', stopped: 'Đã dừng', interrupted: 'Bị ngắt',
 };
 export const runName = (id) => `Nhánh #${String(id).replace('run-', '')}`;
 

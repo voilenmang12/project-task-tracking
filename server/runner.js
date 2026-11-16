@@ -3,11 +3,14 @@
 // the work for its subagents and reports to the tracker through the skill's CLI, as actor "run-<n>".
 //
 // One run at a time per repository, so two sessions never edit the same checkout; the others wait in the queue.
-// Permissions are the repository's own (.claude/settings*.json): nothing here widens them, and in print mode a
-// tool the settings do not allow is refused instead of waiting for a person.
+// Permissions are the repository's own (.claude/settings*.json), and in print mode a tool the settings do not allow
+// is refused instead of waiting for a person. The one addition is the tracker CLI itself (trackerCli), the run's
+// channel for reporting; nothing in the repository is widened.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ACTIVE_RUN } from '../shared/model.js';
 import { RUNNER } from './actions.js';
 
@@ -29,6 +32,7 @@ export function runEnv(base, extra) {
 /** Problems a person must fix on this machine, recognised in what the CLI prints, with the fix in plain words. */
 const KNOWN = [
   [/not logged in|please run \/login|invalid api key/i, 'Claude Code CLI chưa đăng nhập trên máy này: mở terminal, chạy `claude`, gõ /login, rồi chạy lại.'],
+  [/requires approval|can't be checked before it runs|permission.*denied|not allowed/i, 'Agent bị từ chối một lệnh vì quyền của repo không cho phép (xem dòng ✗). Nếu lệnh đó cần cho việc, thêm nó vào "allow" trong .claude/settings.json của repo rồi chạy lại.'],
   [/workspace has not been trusted/i, 'Thư mục repo chưa được tin cậy nên quyền trong .claude/settings.json bị bỏ qua: mở terminal trong thư mục đó, chạy `claude` một lần và chấp nhận hộp thoại tin cậy.'],
 ];
 const diagnose = (text) => KNOWN.filter(([pattern]) => pattern.test(text)).map(([, fix]) => fix);
@@ -36,8 +40,19 @@ const diagnose = (text) => KNOWN.filter(([pattern]) => pattern.test(text)).map((
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 
+/**
+ * The tracker CLI a run reports with: the skill installed for Claude Code when there is one, else this repository's
+ * copy. A run may call exactly this command without asking; nothing else is pre-approved.
+ */
+export function trackerCli() {
+  const installed = path.join(os.homedir(), '.claude', 'skills', 'nhanh-project-tracking', 'scripts', 'nhanh.mjs');
+  const own = fileURLToPath(new URL('../skills/nhanh-project-tracking/scripts/nhanh.mjs', import.meta.url));
+  const file = (fs.existsSync(installed) ? installed : own).split(path.sep).join('/');
+  return file.includes(' ') ? `node "${file}"` : `node ${file}`;
+}
+
 /** What the lead session is told. The user's note is quoted as data. */
-export function runPrompt(run, workspace) {
+export function runPrompt(run, workspace, cli = trackerCli()) {
   const p = workspace.projects.find((x) => x.id === run.projectId);
   const target = run.target.kind === 'task'
     ? `the task "${run.title}" (id ${run.target.id})`
@@ -49,7 +64,10 @@ export function runPrompt(run, workspace) {
     '',
     'How to work:',
     `- Your tracker actor is ${run.actor} (NHANH_ACTOR is set). Follow the nhanh-project-tracking skill and this repository's CLAUDE.md.`,
-    `- Start with \`digest ${p.id}\`, then read the target (\`task.get\`) and what it needs in the repository.`,
+    `- Call the tracker with exactly \`${cli} <action> ...\`, one call per Bash command: no ";", "&&", pipes, "cd" or shell`,
+    '  variables around it, since only that exact command is approved for this run. Long or multi-line arguments go in',
+    "  --json '<object>'. Every other command and edit follows this repository's own permissions.",
+    `- Start with \`${cli} digest ${p.id}\`, then read the target (\`${cli} task.get taskId=...\`) and what it needs in the repository.`,
     '- You lead this run. Make the branch by the repository\'s git rules (task/<slug>), `task.start` the task with that branch,',
     '  and split the work: an L task gets its sub-tasks in the tracker (task.add, reason "Split of <id>"); give each piece to',
     '  a subagent (Agent tool) with a clear brief and check what comes back. Only you write to the tracker, with',
@@ -100,6 +118,7 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
         if (block.type === 'tool_result' && block.is_error) {
           const text = Array.isArray(block.content) ? block.content.map((c) => c.text || '').join(' ') : block.content;
           append(run.id, `✗ ${clip(oneLine(text), 300)}`);
+          state.notice?.(String(text));
         }
       }
     } else if (e.type === 'result') {
@@ -116,9 +135,11 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
       return report(run.id, { status: 'failed', error: `Repository folder not found: ${cwd}` });
     }
     append(run.id, `• Bắt đầu ${run.id} trong ${cwd}`);
+    const cli = trackerCli();
     let child;
     try {
-      child = spawn(command[0], [...command.slice(1), '-p', '--output-format', 'stream-json', '--verbose', '-n', `Nhánh ${run.id}: ${run.title}`], {
+      const args = ['-p', '--output-format', 'stream-json', '--verbose', '-n', `Nhánh ${run.id}: ${run.title}`, '--allowedTools', `Bash(${cli}:*)`];
+      child = spawn(command[0], [...command.slice(1), ...args], {
         cwd,
         env: runEnv(process.env, { NHANH_ACTOR: run.actor, NHANH_URL: `http://127.0.0.1:${port}`, NHANH_RUN: run.id }),
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -129,7 +150,7 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
       return report(run.id, { status: 'failed', error: e.message });
     }
     const state = { child, stopping: false, result: null, sessionId: null, stderr: [], fixes: new Set() };
-    const notice = (text) => {
+    state.notice = (text) => {
       for (const fix of diagnose(text)) {
         if (state.fixes.has(fix)) continue;
         state.fixes.add(fix);
@@ -137,7 +158,7 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
       }
     };
     live.set(run.id, state);
-    child.stdin.end(runPrompt(run, workspace));
+    child.stdin.end(runPrompt(run, workspace, cli));
     let buffer = '';
     child.stdout.on('data', (chunk) => {
       buffer += chunk;
@@ -149,7 +170,7 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
       for (const line of String(chunk).split('\n')) {
         if (!line.trim()) continue;
         state.stderr.push(line);
-        notice(line);
+        state.notice(line);
         if (state.stderr.length > 20) state.stderr.shift();
         append(run.id, `! ${clip(oneLine(line), 300)}`);
       }
@@ -159,7 +180,7 @@ export function createRunner({ service, root, workspaceDir, port, command = ['cl
       if (buffer.trim()) readEvent(run, state, buffer);
       live.delete(run.id);
       const r = state.result;
-      if (r?.result) notice(String(r.result));
+      if (r?.result && r.is_error) state.notice(String(r.result));
       const summary = r?.result && !r.is_error ? String(r.result).slice(0, 4000) : '';
       let status = 'failed';
       if (state.stopping) status = 'stopped';

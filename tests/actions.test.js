@@ -327,14 +327,23 @@ test('runs: only the user starts and stops them; the supervisor reports; an ende
   assert.deepEqual([t.status, t.owner], ['todo', null]);
   assert.ok(w.runs[0].endedAt);
 
+  // A session that ends well is "done" only when its task is; otherwise "unfinished".
+  const r2 = run('run.start', { taskId: 'combat' }, USER);
+  run('task.start', { taskId: 'combat' }, { actor: r2.actor });
+  assert.equal(run('run.report', { runId: r2.id, status: 'done' }, { actor: 'tracker' }).status, 'unfinished');
+  const r3 = run('run.start', { taskId: 'combat' }, USER);
+  run('task.start', { taskId: 'combat' }, { actor: r3.actor });
+  run('task.done', { taskId: 'combat', summary: 'Combat works', evidence: { commit: 'abc' } }, { actor: r3.actor });
+  assert.equal(run('run.report', { runId: r3.id, status: 'done' }, { actor: 'tracker' }).status, 'done');
+
   // A flow run takes the flow for its actor, and pauses it when it ends.
   const f = run('flow.create', { projectId: 'g', title: 'F' }, USER);
   run('flow.update', { flowId: f.id, nodes: [{ taskId: 'hub', x: 0, y: 0 }] }, USER);
   const fr = run('run.start', { flowId: f.id }, USER);
   assert.deepEqual([w.flows[0].assignee, w.flows[0].status], [fr.actor, 'running']);
   run('run.stop', { runId: fr.id }, USER);
-  assert.equal(w.runs[1].status, 'stopped', 'a queued run stops at once');
+  assert.equal(w.runs.at(-1).status, 'stopped', 'a queued run stops at once');
   assert.equal(w.flows[0].status, 'paused', 'and its flow is no longer handed out');
-  assert.equal(run('project.get', { projectId: 'g' }).runs.length, 2);
+  assert.equal(run('project.get', { projectId: 'g' }).runs.length, 4);
   validateWorkspace(w);
 });
