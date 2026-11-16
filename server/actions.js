@@ -5,7 +5,7 @@
 // (plan.apply, task.start, task.progress, task.add, task.ask, task.block, task.done) and the tracker keeps the
 // state, the journal and the numbers consistent.
 import {
-  ACTIVE_RUN, AFTER_MODES, FLOW_STATUSES, HUMAN, RUN_STATUSES, KINDS, SIZES, awaitingReview, childrenOf, descendantIds, flowState, hasDeadlock,
+  ACTIVE_RUN, AFTER_MODES, FLOW_STATUSES, HUMAN, RUN_STATUSES, layoutNodes, sessionsOf, KINDS, SIZES, awaitingReview, childrenOf, descendantIds, flowState, hasDeadlock,
   needsAgent, needsUser, nextTasks, projectSummary, rollup, waitingOn,
 } from '../shared/model.js';
 
@@ -140,6 +140,42 @@ function makeContext(w, actor, now) {
   return { w, actor, now, isHuman, project, task, flow, log, proposal, underReview, uniqueId, criteria, newTask, mine, tick, sizeOk, kindOk, labelsOk };
 }
 
+/** Clears the review of pending items: the given ones, what is under them and the groups above them. */
+function approveItems(c, ids) {
+  const all = new Set();
+  for (const id of ids) {
+    const t = c.w.tasks.find((x) => x.id === id);
+    if (!t) continue;
+    all.add(t.id);
+    for (const d of descendantIds(c.w.tasks, t.id)) all.add(d);
+    for (let p = t; p.parentId; ) {
+      p = c.task(p.parentId);
+      all.add(p.id);
+    }
+  }
+  const approved = [];
+  for (const x of c.w.tasks) {
+    if (all.has(x.id) && x.review === 'pending') {
+      x.review = null;
+      x.updatedAt = c.now;
+      approved.push(x.id);
+    }
+  }
+  return approved;
+}
+
+/** The user said yes to a flow (in the UI, or in chat as the agent quotes): the flow and its proposed items. */
+function approveFlow(c, f, how) {
+  const approved = approveItems(c, f.nodes.map((n) => n.taskId));
+  if (f.review !== 'pending' && !approved.length) return;
+  f.review = null;
+  f.approvedAt = c.now;
+  c.log('approved', f.projectId, null, `Flow approved: ${f.title} (${how})`, { flow: f.id, approved });
+}
+
+const MAX_REPORTS = 10;
+const lastReport = (f) => (f.reports?.length ? f.reports[f.reports.length - 1] : null);
+
 const view = (w, t, roll) => ({
   ...t, rollup: roll[t.id], needsUser: needsUser(t), needsAgent: needsAgent(t), waitingOn: waitingOn(w.tasks, t),
 });
@@ -153,6 +189,7 @@ function flowView(w, f, actor) {
     total: st.total,
     done: st.done,
     mine: !f.assignee || f.assignee === actor,
+    report: lastReport(f),
     next: st.next.map((t) => t.id),
     doing: st.doing.map((t) => t.id),
     waiting: st.waiting.map((x) => ({ id: x.task.id, waitingOn: x.waitingOn })),
@@ -185,7 +222,7 @@ const ACTIONS = [
   },
   {
     name: 'digest', read: true, args: { projectId: req(S(100)) },
-    description: 'What an agent reads when a session starts: work in progress, the flows the user gave you to run in order (take their next task first), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox).',
+    description: 'What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user\'s OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox).',
     run: ({ w, project, actor }, a) => {
       const p = project(a.projectId);
       const tasks = w.tasks.filter((t) => t.projectId === p.id && t.kind === 'task');
@@ -196,11 +233,14 @@ const ACTIONS = [
       });
       const byId = new Map(w.tasks.map((t) => [t.id, t]));
       const flows = w.flows
-        .filter((f) => f.projectId === p.id && f.status !== 'draft')
+        .filter((f) => f.projectId === p.id)
         .map((f) => {
           const v = flowView(w, f, actor);
+          const report = lastReport(f);
           return {
             id: f.id, title: f.title, status: v.state, assignee: f.assignee || null, mine: v.mine, done: v.done, total: v.total,
+            review: f.review || null,
+            lastReport: report ? { at: report.at, by: report.by, text: report.text.slice(0, 1500) } : null,
             next: v.next.map((id) => brief(byId.get(id))),
             doing: v.doing.map((id) => brief(byId.get(id))),
             waiting: v.waiting.map((x) => ({ ...brief(byId.get(x.id)), waitingOn: x.waitingOn })),
@@ -233,6 +273,8 @@ const ACTIONS = [
         questions: live.filter((t) => t.question && !t.question.answer).map(item),
         blocked: live.filter((t) => t.status === 'blocked').map(item),
         review: w.tasks.filter((t) => awaitingReview(t) && !w.projects.find((p) => p.id === t.projectId)?.archived).map(item),
+        flows: w.flows.filter((f) => f.review === 'pending' && !w.projects.find((p) => p.id === f.projectId)?.archived)
+          .map((f) => ({ ...flowView(w, f), projectTitle: title.get(f.projectId) })),
         pending: live.filter(needsAgent).map(item),
       };
     },
@@ -259,6 +301,12 @@ const ACTIONS = [
       return w.runs.filter((r) => !a.projectId || r.projectId === a.projectId).slice(-(a.limit ?? 50))
         .map((r) => ({ ...r, projectTitle: title.get(r.projectId) }));
     },
+  },
+  {
+    name: 'activity', read: true, args: {},
+    description: 'Across all projects, the agent sessions holding work now (chats in Claude Code, not tracker runs): actor, tasks in work, running flows, last write.',
+    run: ({ w }) => w.projects.filter((p) => !p.archived)
+      .flatMap((p) => sessionsOf(w, p.id).map((s) => ({ ...s, projectTitle: p.title }))),
   },
   {
     name: 'events.list', read: true, args: { projectId: S(100), taskId: S(100), limit: NUM },
@@ -308,8 +356,8 @@ const ACTIONS = [
   },
 
   {
-    name: 'plan.apply', args: { projectId: req(S(100)), nodes: req(LIST), note: S(2000) },
-    description: 'Set up or extend the plan in one call. On a project with review on, new items wait for approval by the user (digest: awaitingReview) and cannot be started before. nodes: [{id, title, kind?, size?, description?, criteria?: [text], labels?, children?: [...]}]. An item with children is a group unless kind says otherwise. Items are matched by id: a new id is created, a known id gets its title, description, size and missing criteria updated. Nothing is ever deleted and no status changes, so the call is safe to repeat.',
+    name: 'plan.apply', args: { projectId: req(S(100)), nodes: req(LIST), note: S(2000), flow: OBJ },
+    description: 'Set up or extend the plan in one call. A node may carry after: [ids of items it runs after, in this call or already in the project] and afterMode ("all" or "any"). flow: {id?, title, nodes?: [ids]} also lays the work out as a flow (default nodes: the top-level nodes of this call); a flow an agent makes is a proposal: it waits for the user\'s OK in the web UI or in chat before anyone runs it. On a project with review on, new items wait for approval by the user (digest: awaitingReview) and cannot be started before. nodes: [{id, title, kind?, size?, description?, criteria?: [text], labels?, children?: [...]}]. An item with children is a group unless kind says otherwise. Items are matched by id: a new id is created, a known id gets its title, description, size and missing criteria updated. Nothing is ever deleted and no status changes, so the call is safe to repeat.',
     run: (c, a) => {
       c.project(a.projectId);
       const created = [];
@@ -339,14 +387,58 @@ const ACTIONS = [
             c.w.tasks.push(t);
             created.push(id);
           }
+          if (n.after !== undefined || n.afterMode !== undefined) arrows.push({ id, after: n.after, afterMode: n.afterMode });
           if (n.children?.length) apply(n.children, id, depth + 1);
         }
       };
+      const arrows = [];
       apply(a.nodes, null, 1);
-      if (created.length || updated.length) {
-        c.log('plan', a.projectId, null, a.note?.trim() || 'Plan applied', { created, updated });
+      // Order arrows once every node exists, so they may point at nodes later in the same call.
+      for (const { id, after, afterMode } of arrows) {
+        const t = c.task(id);
+        if (afterMode !== undefined && afterMode !== null) {
+          if (!AFTER_MODES.includes(afterMode)) fail(`plan.apply: afterMode is one of ${AFTER_MODES.join(', ')}`);
+          t.afterMode = afterMode;
+        }
+        if (after !== undefined && after !== null) {
+          if (!Array.isArray(after)) fail(`plan.apply: "after" of "${id}" is a list of ids`);
+          for (const x of after) {
+            if (typeof x !== 'string' || x === id) fail(`plan.apply: "after" of "${id}" lists other items`);
+            if (c.task(x).projectId !== a.projectId) fail(`plan.apply: "${x}" is in another project`);
+          }
+          t.after = [...new Set(after)];
+        }
       }
-      return { created, updated };
+      if (arrows.length && hasDeadlock(c.w.tasks.filter((x) => x.projectId === a.projectId))) {
+        fail('plan.apply: the order arrows make a loop (an item would wait for itself, or for a group it belongs to)', 409);
+      }
+      let flowId = null;
+      if (a.flow) {
+        if (typeof a.flow.title !== 'string' || !a.flow.title.trim() || a.flow.title.length > 200) fail('plan.apply: flow needs a title');
+        const ids = a.flow.nodes || a.nodes.map((n) => n.id || `${a.projectId}-${slug(n.title)}`);
+        for (const x of ids) if (typeof x !== 'string' || c.task(x).projectId !== a.projectId) fail(`plan.apply: flow node "${x}" is not in this project`);
+        let f = a.flow.id && c.w.flows.find((x) => x.id === a.flow.id);
+        if (f && f.projectId !== a.projectId) fail(`plan.apply: flow "${f.id}" belongs to another project`, 409);
+        if (!f) {
+          let fid = a.flow.id || `${a.projectId}-flow-${slug(a.flow.title)}`;
+          for (let k = 2; c.w.flows.some((x) => x.id === fid); k += 1) fid = `${a.flow.id || `${a.projectId}-flow-${slug(a.flow.title)}`}-${k}`;
+          f = { id: fid, projectId: a.projectId, title: a.flow.title.trim(), nodes: [], assignee: null, status: 'draft', createdAt: c.now, updatedAt: c.now };
+          c.w.flows.push(f);
+          c.log('flow', a.projectId, null, `Flow ${c.isHuman ? 'created' : 'proposed'}: ${f.title}`);
+        }
+        const known = new Set(f.nodes.map((n) => n.taskId));
+        const all = [...f.nodes.map((n) => n.taskId), ...ids.filter((x) => !known.has(x))];
+        const placed = layoutNodes(c.w.tasks, all);
+        f.nodes = f.nodes.length ? [...f.nodes, ...placed.filter((n) => !known.has(n.taskId))] : placed;
+        f.title = a.flow.title.trim();
+        if (!c.isHuman && f.status !== 'running') f.review = 'pending';
+        f.updatedAt = c.now;
+        flowId = f.id;
+      }
+      if (created.length || updated.length || arrows.length || flowId) {
+        c.log('plan', a.projectId, null, a.note?.trim() || 'Plan applied', { created, updated, flow: flowId });
+      }
+      return { created, updated, flow: flowId };
     },
   },
   {
@@ -537,20 +629,7 @@ const ACTIONS = [
     run: (c, a) => {
       if (!c.isHuman) fail('task.approve: only the user approves proposed work', 403);
       const t = c.task(a.taskId);
-      const ids = descendantIds(c.w.tasks, t.id);
-      ids.add(t.id);
-      for (let p = t; p.parentId; ) {
-        p = c.task(p.parentId);
-        ids.add(p.id);
-      }
-      const approved = [];
-      for (const x of c.w.tasks) {
-        if (ids.has(x.id) && x.review === 'pending') {
-          x.review = null;
-          x.updatedAt = c.now;
-          approved.push(x.id);
-        }
-      }
+      const approved = approveItems(c, [t.id]);
       if (!approved.length) return { approved };
       const text = a.note?.trim() || (approved.length > 1 ? `Approved ${approved.length} items` : 'Approved');
       c.log('approved', t.projectId, t.id, text, { approved });
@@ -661,16 +740,22 @@ const ACTIONS = [
       let id = a.id || `${a.projectId}-flow-${slug(a.title)}`;
       for (let n = 2; c.w.flows.some((x) => x.id === id); n += 1) id = `${a.id || `${a.projectId}-flow-${slug(a.title)}`}-${n}`;
       const f = { id, projectId: a.projectId, title: a.title.trim(), nodes: [], assignee: null, status: 'draft', createdAt: c.now, updatedAt: c.now };
+      if (!c.isHuman) f.review = 'pending';
       c.w.flows.push(f);
-      c.log('flow', f.projectId, null, `Flow created: ${f.title}`);
+      c.log('flow', f.projectId, null, `Flow ${c.isHuman ? 'created' : 'proposed'}: ${f.title}`);
       return f;
     },
   },
   {
-    name: 'flow.update', args: { flowId: req(S(100)), title: S(200), nodes: LIST, assignee: S(100), status: S(10) },
-    description: 'Change a flow: title, nodes ([{taskId, x, y}], the whole list), assignee (the actor that runs it; "" = any agent) or status: "running" (agents take its tasks in order), "paused" or "draft".',
+    name: 'flow.update', args: { flowId: req(S(100)), title: S(200), nodes: LIST, assignee: S(100), status: S(10), userSaid: S(2000) },
+    description: 'Change a flow: title, nodes ([{taskId, x, y}], the whole list), assignee (the actor that runs it; "" = any agent) or status: "running" (agents take its tasks in order), "paused" or "draft". An agent sets "running" only when the user said so in chat: pass their words in userSaid (recorded in the journal); that also approves the flow and its proposed items, and the flow becomes yours unless assignee says otherwise.',
     run: (c, a) => {
       const f = c.flow(a.flowId);
+      if (!c.isHuman && a.status === 'running' && f.status !== 'running') {
+        if (!a.userSaid?.trim()) fail('flow.update: an agent runs a flow only when the user said so; pass their words in userSaid', 403);
+        approveFlow(c, f, `the user said in chat to ${c.actor}: "${a.userSaid.trim()}"`);
+        if (a.assignee === undefined || a.assignee === null) a.assignee = c.actor;
+      }
       if (a.title) f.title = a.title.trim();
       if (a.nodes) {
         const seen = new Set();
@@ -681,6 +766,7 @@ const ACTIONS = [
           seen.add(n.taskId);
           return { taskId: n.taskId, x: Math.round(n.x), y: Math.round(n.y) };
         });
+        if (!c.isHuman && f.status !== 'running' && !f.review) f.review = 'pending'; // an agent's change to an idle flow is a new proposal
       }
       if (a.assignee !== undefined && a.assignee !== null) f.assignee = a.assignee.trim() || null;
       if (a.status !== undefined && a.status !== null) {
@@ -692,6 +778,27 @@ const ACTIONS = [
         f.status = a.status;
       }
       f.updatedAt = c.now;
+      return f;
+    },
+  },
+  {
+    name: 'flow.approve', args: { flowId: req(S(100)), note: S(2000) },
+    description: 'The user approves a flow an agent proposed, with the items on it. It is not started: Run in the UI, or the user tells the agent in chat.',
+    run: (c, a) => {
+      if (!c.isHuman) fail('flow.approve: only the user approves; when they say so in chat, use flow.update with userSaid', 403);
+      const f = c.flow(a.flowId);
+      approveFlow(c, f, a.note?.trim() || 'in the web UI');
+      return f;
+    },
+  },
+  {
+    name: 'flow.report', args: { flowId: req(S(100)), text: req(TEXT) },
+    description: 'The overall report of a flow, in Markdown, when its work ends or stops: what is now true, per task in one line each with its proof, what is blocked or waits for the user, the branches and commits, and what to plan next. Shown to the user and in the next digest.',
+    run: (c, a) => {
+      const f = c.flow(a.flowId);
+      f.reports = [...(f.reports || []), { at: c.now, by: c.actor, text: a.text.trim() }].slice(-MAX_REPORTS);
+      f.updatedAt = c.now;
+      c.log('report', f.projectId, null, a.text.trim(), { flow: f.id });
       return f;
     },
   },
@@ -743,6 +850,7 @@ const ACTIONS = [
       };
       if (target.kind === 'flow') {
         const fl = c.flow(target.id);
+        approveFlow(c, fl, 'Run in the web UI');
         fl.assignee = run.actor;
         fl.status = 'running';
         fl.updatedAt = c.now;
@@ -801,6 +909,10 @@ const ACTIONS = [
           }
           const fl = r.target.kind === 'flow' && c.w.flows.find((x) => x.id === r.target.id);
           if (fl && fl.assignee === r.actor && fl.status === 'running') fl.status = 'paused';
+          const wrote = fl && (fl.reports || []).some((x) => x.by === r.actor);
+          if (fl && r.summary && !wrote) {
+            fl.reports = [...(fl.reports || []), { at: c.now, by: r.actor, text: r.summary, fromRun: r.id }].slice(-MAX_REPORTS);
+          }
           const text = { done: 'finished', unfinished: 'ended, the work is not finished', failed: `failed: ${r.error || `exit code ${r.exitCode}`}`, stopped: 'stopped', interrupted: 'interrupted (the tracker restarted)' }[a.status];
           c.log('run', r.projectId, r.target.kind === 'task' ? r.target.id : null, `${r.id} ${text}${r.summary ? `\n${r.summary}` : ''}`);
         }

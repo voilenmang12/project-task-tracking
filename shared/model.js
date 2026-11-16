@@ -185,6 +185,7 @@ export function projectSummary(workspace, projectId) {
     needsAgent: work.filter(needsAgent).length,
     awaitingReview: tasks.filter(awaitingReview).length,
     running: (workspace.runs || []).filter((r) => r.projectId === projectId && ACTIVE_RUN.includes(r.status)).length,
+    sessions: sessionsOf(workspace, projectId).length,
     lastEventAt: lastEvent?.at ?? null,
   };
 }
@@ -318,6 +319,55 @@ export function flowState(workspace, flow) {
     doing: open.filter((t) => t.status === 'doing' || t.status === 'blocked'),
     waiting: open.filter((t) => t.status === 'todo' && !runnable(t)).map((t) => ({ task: t, waitingOn: waitingOn(tasks, t) })),
   };
+}
+
+export const NODE_W = 220;
+export const NODE_H = 84;
+
+/** Places flow nodes: one column per arrow depth, rows in the order given. Returns [{taskId, x, y}]. */
+export function layoutNodes(tasks, ids) {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const inFlow = new Set(ids);
+  const depth = new Map();
+  const depthOf = (id, seen = new Set()) => {
+    if (depth.has(id)) return depth.get(id);
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const before = (byId.get(id)?.after || []).filter((x) => inFlow.has(x));
+    const d = before.length ? 1 + Math.max(...before.map((x) => depthOf(x, seen))) : 0;
+    depth.set(id, d);
+    return d;
+  };
+  const rows = new Map();
+  return ids.map((id) => {
+    const d = depthOf(id);
+    const row = rows.get(d) || 0;
+    rows.set(d, row + 1);
+    return { taskId: id, x: 40 + d * (NODE_W + 80), y: 40 + row * (NODE_H + 46) };
+  });
+}
+
+/**
+ * The agent sessions holding work in a project now (a chat the user runs in Claude Code, not a tracker run): who,
+ * which tasks they are doing, which running flows are theirs, and when they last wrote.
+ */
+export function sessionsOf(workspace, projectId) {
+  const isSession = (actor) => actor && actor !== HUMAN && !/^run-\d+$/.test(actor);
+  const out = new Map();
+  const get = (actor) => {
+    if (!out.has(actor)) out.set(actor, { actor, projectId, doing: [], flows: [], lastAt: null });
+    return out.get(actor);
+  };
+  for (const t of workspace.tasks) {
+    if (t.projectId === projectId && (t.status === 'doing' || t.status === 'blocked') && isSession(t.owner)) {
+      get(t.owner).doing.push({ id: t.id, title: t.title, status: t.status });
+    }
+  }
+  for (const f of workspace.flows || []) {
+    if (f.projectId === projectId && f.status === 'running' && isSession(f.assignee)) get(f.assignee).flows.push({ id: f.id, title: f.title });
+  }
+  for (const e of workspace.events) if (e.projectId === projectId && out.has(e.actor)) out.get(e.actor).lastAt = e.at;
+  return [...out.values()];
 }
 
 /** Task ids that a running flow keeps for its own actor, so other agents leave them alone. */

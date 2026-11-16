@@ -347,3 +347,64 @@ test('runs: only the user starts and stops them; the supervisor reports; an ende
   assert.equal(run('project.get', { projectId: 'g' }).runs.length, 4);
   validateWorkspace(w);
 });
+
+test('the work loop: an agent proposes a plan as a flow, runs it when the user says so in chat, and reports', () => {
+  const { w, run } = workspace();
+  run('project.update', { projectId: 'g', review: true }, USER);
+  const plan = run('plan.apply', {
+    projectId: 'g',
+    note: 'Shop milestone, from the chat of today',
+    flow: { id: 'shop-flow', title: 'Shop' },
+    nodes: [
+      { id: 'shop-ui', title: 'Shop screen', size: 'M' },
+      { id: 'shop-data', title: 'Shop data', size: 'S' },
+      { id: 'shop-buy', title: 'Buy button', size: 'M', after: ['shop-ui', 'shop-data'] },
+    ],
+  });
+  assert.equal(plan.flow, 'shop-flow');
+  const f = w.flows.find((x) => x.id === 'shop-flow');
+  assert.equal(f.review, 'pending', 'a flow an agent makes waits for the user');
+  assert.deepEqual(w.tasks.find((t) => t.id === 'shop-buy').after, ['shop-ui', 'shop-data']);
+  const at = (id) => f.nodes.find((n) => n.taskId === id);
+  assert.ok(at('shop-buy').x > at('shop-ui').x, 'the layout puts later work to the right');
+  assert.equal(run('digest', { projectId: 'g' }).flows.find((x) => x.id === 'shop-flow').review, 'pending');
+  assert.equal(run('attention', {}).flows.length, 1);
+
+  // The agent cannot start it on its own; the user's words in chat are the OK.
+  rejects(() => run('flow.update', { flowId: 'shop-flow', status: 'running' }), /userSaid/, 403);
+  rejects(() => run('flow.approve', { flowId: 'shop-flow' }), /only the user/, 403);
+  run('flow.update', { flowId: 'shop-flow', status: 'running', userSaid: 'ok chạy đi' });
+  assert.deepEqual([f.status, f.assignee, f.review ?? null], ['running', 'claude-a', null]);
+  assert.equal(w.tasks.find((t) => t.id === 'shop-ui').review, null, 'its proposed tasks are approved with it');
+  assert.match(w.events.filter((e) => e.type === 'approved').at(-1).text, /ok chạy đi/);
+  assert.deepEqual(run('digest', { projectId: 'g' }).flows.find((x) => x.id === 'shop-flow').next.map((t) => t.id), ['shop-ui', 'shop-data']);
+
+  // The chat session shows as working; the report closes the loop and comes back in the next digest.
+  run('task.start', { taskId: 'shop-ui' });
+  assert.deepEqual(run('activity', {}).map((s) => [s.actor, s.doing.length, s.flows.length]), [['claude-a', 1, 1]]);
+  assert.equal(projectSummary(w, 'g').sessions, 1);
+  run('flow.report', { flowId: 'shop-flow', text: '## Shop\n- Shop screen: done (abc)\n- Next: prices' });
+  const d = run('digest', { projectId: 'g' }).flows.find((x) => x.id === 'shop-flow');
+  assert.match(d.lastReport.text, /Next: prices/);
+  assert.equal(w.events.at(-1).type, 'report');
+  validateWorkspace(w);
+});
+
+test('the user approves a flow in the UI; an agent changing an idle flow proposes it again; a run reports for a silent session', () => {
+  const { w, run } = workspace();
+  run('plan.apply', { projectId: 'g', flow: { id: 'f', title: 'Core' }, nodes: [{ id: 'move', title: 'Movement' }, { id: 'combat', title: 'Combat', after: ['move'] }] });
+  const f = w.flows.find((x) => x.id === 'f');
+  run('flow.approve', { flowId: 'f' }, USER);
+  assert.equal(f.review, null);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'move', x: 0, y: 0 }] });
+  assert.equal(f.review, 'pending', 'a changed flow is a new proposal');
+
+  run('project.update', { projectId: 'g', repo: 'Game' }, USER);
+  const r = run('run.start', { flowId: 'f' }, USER);
+  assert.equal(f.review, null, 'Run is the user\'s OK');
+  run('run.report', { runId: r.id, status: 'running' }, { actor: 'tracker' });
+  run('run.report', { runId: r.id, status: 'done', summary: 'Movement started, combat waits.' }, { actor: 'tracker' });
+  assert.deepEqual([f.reports.at(-1).by, f.reports.at(-1).fromRun], [r.actor, r.id]);
+  rejects(() => run('plan.apply', { projectId: 'g', nodes: [{ id: 'move', title: 'Movement', after: ['combat'] }] }), /loop/, 409);
+  validateWorkspace(w);
+});

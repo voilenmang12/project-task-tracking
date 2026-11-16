@@ -46,6 +46,23 @@ Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đ�
 
 Trang tự cập nhật ngay khi agent ghi (server-sent events).
 
+## Vòng làm việc với agent
+
+Tracker thay cho plan mode: kế hoạch nằm trên tracker để bạn duyệt dạng luồng, rồi agent chạy nó.
+
+1. **Chat lên kế hoạch** với agent trong Claude Code (mở trong thư mục game). Agent ghi kế hoạch lên tracker bằng một
+   lần `plan.apply`: việc có cỡ, tiêu chí, mũi tên thứ tự, và một **luồng đề xuất**. Agent dừng ở đó.
+2. **Bạn duyệt** ở tab Luồng (hoặc Cần bạn → "Luồng agent đề xuất"): sửa, nối lại, bỏ bớt, rồi Duyệt.
+3. **Chạy**: nói "ok chạy đi" trong chat (agent ghi lại đúng lời bạn rồi tự chạy luồng trong phiên đó), hoặc bấm
+   **Chạy bằng agent** (tracker mở một phiên chạy ngầm).
+4. Agent làm lần lượt các việc kế tiếp: nhánh git, chia việc lớn cho agent con, báo tiến độ, đóng việc kèm bằng chứng.
+   Phiên chat đang làm hiện ở đầu trang dự án và trang **Đang chạy**.
+5. **Báo cáo**: mỗi việc có tóm tắt và bằng chứng; cả luồng có **báo cáo tổng** (nút Báo cáo trên luồng; cũng hiện
+   trong Nhật ký và trong digest).
+6. Vòng sau bắt đầu từ báo cáo đó: chat tiếp, agent mở rộng kế hoạch và đề xuất luồng mới.
+
+Agent không tự chạy một luồng khi bạn chưa đồng ý; lời đồng ý trong chat được trích nguyên văn vào Nhật ký.
+
 ## Chạy bằng agent
 
 Nút ▶ trên một việc (rê chuột vào dòng, hoặc "Chạy bằng agent" trong chi tiết) và "Chạy bằng agent" trên thanh của
@@ -96,6 +113,7 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 | `task.add` | Việc phát sinh; agent phải ghi lý do |
 | `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
 | `flow.create` / `flow.update` / `flow.delete` | Tạo luồng, sửa node, giao actor, chạy hoặc tạm dừng; chỉ bạn xoá luồng |
+| `flow.approve` / `flow.report` / `activity` | Bạn duyệt luồng; agent ghi báo cáo tổng của luồng; các phiên chat đang giữ việc |
 | `run.start` / `run.stop` / `runs.list` | Bạn chạy hoặc dừng một phiên Claude Code cho một việc hoặc một luồng; agent không gọi được |
 | `task.approve` | Bạn duyệt mục agent đề xuất (cùng các mục bên trong và mốc phía trên); chỉ người dùng gọi được |
 | `task.block` / `task.unblock` / `task.release` / `task.reopen` / `task.drop` | Chặn, gỡ chặn, trả lại, mở lại, bỏ |

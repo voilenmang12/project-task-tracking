@@ -2,12 +2,13 @@
 // flow to one agent to run in order. The arrows are the items' own "after" lists, so they hold everywhere; the flow
 // keeps the place of each node, the actor and whether it runs.
 import React from 'react';
-import { Flag, LayoutGrid, Pause, Pencil, Play, Plus, Trash2, X } from 'lucide-react';
+import { Check, FileText, Flag, LayoutGrid, Pause, Pencil, Play, Plus, Trash2, X } from 'lucide-react';
 import { call } from './api.js';
 import { childrenOf } from '../shared/model.js';
 import { askText, confirmAction } from './Dialog.jsx';
 import { Bar, StatusIcon, actorName, pct } from './ui.jsx';
 import { ACTIVE, RunButton, RunLine } from './Runs.jsx';
+import FlowReport from './FlowReport.jsx';
 
 const W = 220; // node size; the arrows attach at the middle of the left and right edges
 const H = 84;
@@ -34,12 +35,12 @@ export default function FlowView({ projectId, tasks, flows, flow, onSelectFlow, 
     );
   }
   return (
-    <FlowCanvas key={flow.id} flow={flow} flows={flows} run={runs.find((r) => r.target.kind === 'flow' && r.target.id === flow.id && ACTIVE.includes(r.status))} onSelectFlow={onSelectFlow} onNewFlow={newFlow} tasks={tasks} events={events}
+    <FlowCanvas key={flow.id} flow={flow} flows={flows} run={runs.find((r) => r.target.kind === 'flow' && r.target.id === flow.id && ACTIVE.includes(r.status))} runs={runs} onSelectFlow={onSelectFlow} onNewFlow={newFlow} tasks={tasks} events={events}
       selectedTaskId={selectedTaskId} onOpenTask={onOpenTask} onError={onError} />
   );
 }
 
-function FlowCanvas({ flow, run: liveRun, flows, onSelectFlow, onNewFlow, tasks, events, selectedTaskId, onOpenTask, onError }) {
+function FlowCanvas({ flow, run: liveRun, runs = [], flows, onSelectFlow, onNewFlow, tasks, events, selectedTaskId, onOpenTask, onError }) {
   const byId = React.useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const [nodes, setNodes] = React.useState(flow.nodes);
   // The node being dragged lives in a ref: pointer events can come faster than React renders.
@@ -49,6 +50,7 @@ function FlowCanvas({ flow, run: liveRun, flows, onSelectFlow, onNewFlow, tasks,
   const [edge, setEdge] = React.useState(null); // selected arrow {from, to}
   const [notice, setNotice] = React.useState(null); // {text, taskId}: a short message over the board
   const [dropping, setDropping] = React.useState(false);
+  const [showReport, setShowReport] = React.useState(false);
   const plane = React.useRef(null);
   React.useEffect(() => {
     if (!notice) return undefined;
@@ -205,7 +207,7 @@ function FlowCanvas({ flow, run: liveRun, flows, onSelectFlow, onNewFlow, tasks,
     <div className="flow">
       <div className="flow-bar">
         <select className="select flow-pick" value={flow.id} aria-label="Luồng" onChange={(e) => onSelectFlow(e.target.value)}>
-          {flows.map((f) => <option key={f.id} value={f.id}>{f.title} · {STATE_LABEL[f.state]}</option>)}
+          {flows.map((f) => <option key={f.id} value={f.id}>{f.title} · {f.review === 'pending' ? 'chờ duyệt' : STATE_LABEL[f.state]}</option>)}
         </select>
         <button className="icon-btn" title="Đổi tên luồng" aria-label="Đổi tên luồng" onClick={rename}><Pencil size={15} /></button>
         <button className="icon-btn" title="Luồng mới" aria-label="Luồng mới" onClick={onNewFlow}><Plus size={16} /></button>
@@ -219,15 +221,28 @@ function FlowCanvas({ flow, run: liveRun, flows, onSelectFlow, onNewFlow, tasks,
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
           <datalist id={`actors-${flow.id}`}>{actors.map((a) => <option key={a} value={a} />)}</datalist>
         </label>
-        {!liveRun && flow.state !== 'done' && live.length > 0 && <RunButton flowId={flow.id} title={flow.title} onError={onError} />}
+        {!liveRun && flow.status !== 'running' && flow.state !== 'done' && live.length > 0 && <RunButton flowId={flow.id} title={flow.title} onError={onError} />}
         {!liveRun && (flow.status === 'running'
           ? <button className="btn" title="Ngừng giao luồng cho agent bên ngoài" onClick={() => run('paused')}><Pause size={14} /> Tạm dừng</button>
           : <button className="btn" title="Chỉ giao luồng cho actor ở ô 'Giao cho'; agent đó nhận ở phiên Claude Code bạn tự mở" disabled={!live.length || flow.state === 'done'} onClick={() => run('running')}><Play size={14} /> Mở cho agent ngoài</button>)}
+        <button className="btn" title="Báo cáo tổng và từng việc của luồng" onClick={() => setShowReport(true)}>
+          <FileText size={14} /> Báo cáo{flow.reports?.length ? ` (${flow.reports.length})` : ''}
+        </button>
         <button className="icon-btn" title="Sắp xếp tự động theo mũi tên" aria-label="Sắp xếp tự động" onClick={autoLayout}><LayoutGrid size={16} /></button>
         <button className="icon-btn" title="Xoá luồng" aria-label="Xoá luồng" onClick={remove}><Trash2 size={16} /></button>
       </div>
 
       {liveRun && <div className="flow-run"><RunLine run={liveRun} onError={onError} /></div>}
+      {flow.review === 'pending' && (
+        <div className="review-banner flow-review">
+          <div className="grow">
+            <strong>Agent đề xuất luồng này, chờ bạn duyệt.</strong>
+            <div className="muted small">Sửa, nối lại, bỏ bớt nếu cần. Rồi Duyệt, bấm Chạy, hoặc nói "ok chạy đi" với agent trong chat: agent sẽ tự chạy luồng trong phiên đó.</div>
+          </div>
+          <button className="btn btn-approve" onClick={() => call('flow.approve', { flowId: flow.id }).catch(onError)}><Check size={14} /> Duyệt</button>
+        </div>
+      )}
+      {showReport && <FlowReport flow={flow} tasks={tasks} runs={runs} onOpenTask={onOpenTask} onError={onError} onClose={() => setShowReport(false)} />}
       <div className="flow-body">
         {notice && (
           <div className="flow-notice" role="status" onMouseEnter={() => setNotice({ ...notice })}>{notice.text}</div>

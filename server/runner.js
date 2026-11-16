@@ -75,7 +75,7 @@ export function runPrompt(run, workspace, cli = trackerCli()) {
     '- Report as you go (task.progress at each finished step) and close with task.done and its evidence. Commit, merge and',
     '  delete the branch as the repository\'s rules say.',
     run.target.kind === 'flow'
-      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task,\n  and digest again after each task.done, until the flow is finished, all that is left waits for others, or you are blocked.`
+      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task,\n  and digest again after each task.done, until the flow is finished, all that is left waits for others, or you are blocked.\n  Before you end, write the flow's overall report: \`${cli} flow.report --json '{"flowId":"${run.target.id}","text":"<Markdown>"}'\` (the skill's rules.md, "Flow report").`
       : '- Work on this task only. Work you find on the way goes into the tracker by the skill\'s rules, not into this run.',
     '- Nobody answers during the run. A decision that is the user\'s: task.ask with options and the default you continue with.',
     '  A hard stop (a missing asset, a failing tool, a command the permissions refuse, a sign-in): task.block saying what',

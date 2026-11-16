@@ -64,16 +64,49 @@ Send it as a file: `nhanh plan.apply --file plan.json --actor <actor>`.
 
 Then tell the user, in your closing message, how many milestones and tasks the plan has and what you left coarse.
 
+**A plan to run now** (the work loop in SKILL.md) is the same call with the order and a flow: `after` on a node
+names the items it waits for (in this call or already in the project; `afterMode: "any"` when one is enough), and
+`flow` lays the nodes out on the Luồng board as a proposal. By default the flow holds the top-level nodes of the
+call; `flow.nodes` picks others (tasks deep in the tree, whole milestones).
+
+```json
+{
+  "projectId": "cg01-mortalbound",
+  "note": "Shop, as agreed in chat on 2026-11-16",
+  "flow": {"id": "shop", "title": "Shop"},
+  "nodes": [
+    {"id": "shop-data", "title": "Shop items table", "size": "S", "criteria": ["12 items load from the CSV"]},
+    {"id": "shop-ui", "title": "Shop screen", "size": "M", "criteria": ["The Hub opens the shop", "Prices show in gold"]},
+    {"id": "shop-buy", "title": "Buying spends gold", "size": "M", "after": ["shop-data", "shop-ui"],
+     "criteria": ["Buy spends gold and the counter updates", "EditMode tests pass"]}
+  ]
+}
+```
+
+Arrows are for a real order (one needs the other's result), not to queue your own convenience; independent tasks
+stay unlinked so they can run in any order. Never remove the user's arrows.
+
 **Review.** On a project with review on (the user's setting), every item you add with `plan.apply` or `task.add`
 is a proposal: the digest lists it under `AWAITING REVIEW` and `task.start` refuses it (409) until the user
 approves it in the web UI. The user may edit, reorder or drop proposals first; read the digest again before you
 start. A dropped proposal carries the user's reason: do not propose the same thing again without new facts.
 
-**Order arrows.** An item may run `after` other items (tasks or whole groups), set by the user on the Luồng board
-or in the item panel. `task.start` refuses an item whose predecessors are not finished (409). When your plan
+**Order arrows.** An item may run `after` other items (tasks or whole groups), set by you in `plan.apply` or by the
+user on the Luồng board or in the item panel. `task.start` refuses an item whose predecessors are not finished (409). When your plan
 has a real order that the tree does not show (the build needs the art set, the store page needs the build), set it
 with `task.update taskId=<later> --json '{"after":["<earlier>"]}'`; never add arrows only to sequence your own
 convenience, and never remove the user's.
+
+**Flow report** (`flow.report`, Markdown). Written when a flow's work ends or stops; the user reads it first.
+
+```markdown
+## Shop: 2 of 3 done
+- Shop items table: done, 12 items from Data/shop.csv (commit 1a2b3c4, EditMode 8 passed)
+- Shop screen: done, opens from the Hub (commit 5d6e7f8, screenshot production/qa/shop.png)
+- Buying spends gold: blocked, the gold counter has no API yet (see the task)
+**Waits for you:** the price list (question on "Shop screen").
+**Next:** a GoldWallet API, then buying; a sale banner was asked for in chat, not planned yet.
+```
 
 ## 3. Work added on the way
 
