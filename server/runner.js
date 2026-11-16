@@ -72,6 +72,8 @@ export function runPrompt(run, workspace, cli = trackerCli()) {
     '  and split the work: an L task gets its sub-tasks in the tracker (task.add, reason "Split of <id>"); give each piece to',
     '  a subagent (Agent tool) with a clear brief and check what comes back. Only you write to the tracker, with',
     '  agent=<specialist> when a subagent did the piece.',
+    '- A task that was worked on before (task.start prints RESUME): continue on its branch (git status first), keep what is',
+    '  committed, do not redo criteria already ticked, and apply what the user changed since it stopped.',
     '- Report as you go (task.progress at each finished step) and close with task.done and its evidence. Commit, merge and',
     '  delete the branch as the repository\'s rules say.',
     run.target.kind === 'flow'

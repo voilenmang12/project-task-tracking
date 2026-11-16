@@ -3,17 +3,19 @@
 import { call } from './api.js';
 import { confirmAction } from './Dialog.jsx';
 import { actorName } from './ui.jsx';
+import { runName } from './Runs.jsx';
 
 function explain(live) {
   const who = live.owner ? actorName(live.owner) : 'một agent';
+  const item = live.itemTitle && live.itemTitle !== live.title ? `"${live.itemTitle}" nằm trong việc "${live.title}"` : `"${live.title}"`;
   if (live.kind === 'flow') {
-    const item = live.itemTitle && live.itemTitle !== live.title ? `"${live.itemTitle}" nằm trong luồng` : 'Luồng';
-    return `${item} "${live.title}" đang chạy (${who}). Muốn đổi thì phải dừng luồng: luồng tạm dừng, lượt chạy của nó (nếu có) bị tắt, việc đang làm dở trở về Chờ làm.`;
+    return `Luồng "${live.title}" đang chạy (${who}). Đổi người chạy, chuyển về nháp, xoá hay chạy lại luồng thì phải dừng luồng: luồng tạm dừng, lượt chạy của nó (nếu có) bị tắt, việc đang làm dở trở về Chờ làm.`;
   }
-  if (live.kind === 'run') {
-    return `${who} đang chạy "${live.title}" (phiên tracker mở). Dừng sẽ tắt phiên đó và trả việc dở về Chờ làm; những gì đã commit vẫn còn trên nhánh.`;
+  if (live.kind === 'run' || live.runFlowId) {
+    const flow = live.runFlowId ? ' Phiên đó đang chạy cả luồng nên luồng cũng tạm dừng.' : '';
+    return `${item} đang được ${runName(live.runId)} (phiên tracker mở) làm. Dừng sẽ tắt phiên đó và trả việc dở về Chờ làm; những gì đã commit vẫn còn trên nhánh.${flow}`;
   }
-  return `${who} đang làm "${live.itemTitle || live.title}". Dừng sẽ trả việc về Chờ làm; agent đó không ghi tiếp được vào việc này cho tới khi bạn bấm Chạy hoặc bảo nó làm tiếp trong chat.`;
+  return `${item} đang được ${who} làm. Dừng chỉ dừng việc này: việc trở về Chờ làm, agent không ghi tiếp được vào nó; luồng (nếu có) vẫn chạy các việc khác. Khi bạn bảo làm tiếp, agent tiếp tục trên nhánh cũ và áp những gì bạn đã đổi.`;
 }
 
 /** Returns true when it handled the error (asked the user, and stopped and retried on yes). */
@@ -28,7 +30,7 @@ export async function handleLive(error, onError) {
   });
   if (!ok) return true;
   try {
-    const target = live.flowId && live.kind !== 'task' ? { flowId: live.flowId } : { taskId: live.taskId };
+    const target = live.kind === 'flow' || (!live.taskId && live.flowId) ? { flowId: live.flowId } : { taskId: live.taskId };
     await call('work.stop', { ...target, reason: `Stopped by the user to ${live.verb}` });
     if (error.retry) await call(error.retry.name, error.retry.args);
   } catch (e) {

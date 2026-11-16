@@ -310,14 +310,14 @@ export function flowState(workspace, flow) {
   const done = live.filter((t) => t.status === 'done');
   const open = live.filter((t) => t.status !== 'done');
   const hasOpenChild = (t) => tasks.some((c) => c.parentId === t.id && c.status !== 'done' && c.status !== 'dropped');
-  const runnable = (t) => t.status === 'todo' && !hasOpenChild(t) && !awaitingReview(t) && !waitingOn(tasks, t).length;
+  const runnable = (t) => t.status === 'todo' && !hasOpenChild(t) && !awaitingReview(t) && !waitingOn(tasks, t).length && !t.stopped;
   return {
     status: live.length && !open.length ? 'done' : flow.status,
     total: live.length,
     done: done.length,
     next: open.filter(runnable),
     doing: open.filter((t) => t.status === 'doing' || t.status === 'blocked'),
-    waiting: open.filter((t) => t.status === 'todo' && !runnable(t)).map((t) => ({ task: t, waitingOn: waitingOn(tasks, t) })),
+    waiting: open.filter((t) => t.status === 'todo' && !runnable(t)).map((t) => ({ task: t, waitingOn: waitingOn(tasks, t), stopped: Boolean(t.stopped) })),
   };
 }
 

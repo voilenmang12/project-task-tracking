@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Plans, runs and reports a project's work through the Nhanh local tracker, where the user reviews plans as flows and follows autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), when the user asks to plan work (instead of plan mode), when they say to run a plan, at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.5.0"
+  version: "2.6.0"
 ---
 
 # Nhánh project tracking
@@ -83,8 +83,9 @@ runs it once they say so.
 | The user says to run a flow, in chat | `flow.update status=running userSaid="<their words>"`, then its `NEXT` tasks in this session |
 | A flow is `PROPOSED` or approved but not running | Do not start its tasks, even if they look ready |
 | A flow's work ends or stops | `flow.report` with the overall report, and the same in your closing message |
-| A change is refused with 423 ("Stop it first") | Another session is doing that work, or it is in a running flow that is not yours. Do not work around it: leave it, or tell the user what you would change; only they stop work |
-| A task is marked STOPPED by the user, or you get 409 "the user stopped" | Stop writing to it now. The user is changing it. Start it again only when they say so: `task.start userSaid="<their words>"` (or `flow.update status=running userSaid=…` for its flow) |
+| A change is refused with 423 ("Stop it first") | Another session is doing that task (or a task above it), or you touch a running flow that is not yours. Do not work around it: leave it, or tell the user what you would change; only they stop work |
+| A task is marked STOPPED by the user, or you get 409 "the user stopped" | Stop writing to it now: the user is changing it. In a flow, go on with its other ready tasks. Start it again only when they say so: `task.start userSaid="<their words>"` (or `flow.update status=running userSaid=…` for its flow) |
+| `task.start` prints RESUME | The task was worked on before: continue it, do not start over. Check out its branch, `git status` first, keep what is committed, finish or discard what is not, skip criteria already ticked, and apply every "CHANGED BY THE USER" line |
 | A flow is yours and running | Its `NEXT` tasks in the order shown, one after the other; never one marked `then` (it waits for others). A flow marked "not yours" or "paused": leave its tasks alone |
 | Everything left is awaiting review | Stop and say so in your closing message; do not start proposals, do not approve them (only the user does) |
 | A milestone is reached and the next one needs detail | `plan.apply` again with the same ids plus the new children |
