@@ -308,3 +308,33 @@ test('a group node covers the tasks inside it', () => {
   assert.equal(d.total, 2);
   assert.deepEqual(d.next.map((t) => t.id), ['move', 'combat']);
 });
+
+test('runs: only the user starts and stops them; the supervisor reports; an ended run leaves nothing in work', () => {
+  const { w, run } = workspace();
+  rejects(() => run('run.start', { taskId: 'move' }, USER), /no repository folder/);
+  run('project.update', { projectId: 'g', repo: 'Game' }, USER);
+  rejects(() => run('run.start', { taskId: 'move' }), /only the user/, 403);
+  rejects(() => run('run.start', { taskId: 'm1' }, USER), /run a task/);
+  const r = run('run.start', { taskId: 'move' }, USER);
+  rejects(() => run('run.start', { taskId: 'move' }, USER), /already running/, 409);
+  rejects(() => run('run.report', { runId: r.id, status: 'done' }), /only the tracker/, 403);
+
+  // The session takes the task as its actor, then ends without closing it: the task goes back to "todo".
+  run('run.report', { runId: r.id, status: 'running', pid: 42 }, { actor: 'tracker' });
+  run('task.start', { taskId: 'move' }, { actor: r.actor });
+  run('run.report', { runId: r.id, status: 'failed', exitCode: 1, error: 'boom' }, { actor: 'tracker' });
+  const t = w.tasks.find((x) => x.id === 'move');
+  assert.deepEqual([t.status, t.owner], ['todo', null]);
+  assert.ok(w.runs[0].endedAt);
+
+  // A flow run takes the flow for its actor, and pauses it when it ends.
+  const f = run('flow.create', { projectId: 'g', title: 'F' }, USER);
+  run('flow.update', { flowId: f.id, nodes: [{ taskId: 'hub', x: 0, y: 0 }] }, USER);
+  const fr = run('run.start', { flowId: f.id }, USER);
+  assert.deepEqual([w.flows[0].assignee, w.flows[0].status], [fr.actor, 'running']);
+  run('run.stop', { runId: fr.id }, USER);
+  assert.equal(w.runs[1].status, 'stopped', 'a queued run stops at once');
+  assert.equal(w.flows[0].status, 'paused', 'and its flow is no longer handed out');
+  assert.equal(run('project.get', { projectId: 'g' }).runs.length, 2);
+  validateWorkspace(w);
+});

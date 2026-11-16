@@ -7,6 +7,7 @@ import { call } from './api.js';
 import { childrenOf } from '../shared/model.js';
 import { askText, confirmAction } from './Dialog.jsx';
 import { Bar, StatusIcon, actorName, pct } from './ui.jsx';
+import { ACTIVE, RunButton, RunLine } from './Runs.jsx';
 
 const W = 220; // node size; the arrows attach at the middle of the left and right edges
 const H = 84;
@@ -18,7 +19,7 @@ const isFinished = (tasks, item) => {
   return item.rollup?.status === 'done' || childrenOf(tasks, item.id).every((c) => isFinished(tasks, c));
 };
 
-export default function FlowView({ projectId, tasks, flows, flow, onSelectFlow, events, selectedTaskId, onOpenTask, onError }) {
+export default function FlowView({ projectId, tasks, flows, flow, onSelectFlow, events, runs = [], selectedTaskId, onOpenTask, onError }) {
   const newFlow = async () => {
     const title = await askText({ title: 'Luồng mới', label: 'Tên luồng', placeholder: 'Setup dự án', required: true, confirmLabel: 'Tạo' });
     if (title) call('flow.create', { projectId, title }).then((f) => onSelectFlow(f.id)).catch(onError);
@@ -33,12 +34,12 @@ export default function FlowView({ projectId, tasks, flows, flow, onSelectFlow, 
     );
   }
   return (
-    <FlowCanvas key={flow.id} flow={flow} flows={flows} onSelectFlow={onSelectFlow} onNewFlow={newFlow} tasks={tasks} events={events}
+    <FlowCanvas key={flow.id} flow={flow} flows={flows} run={runs.find((r) => r.target.kind === 'flow' && r.target.id === flow.id && ACTIVE.includes(r.status))} onSelectFlow={onSelectFlow} onNewFlow={newFlow} tasks={tasks} events={events}
       selectedTaskId={selectedTaskId} onOpenTask={onOpenTask} onError={onError} />
   );
 }
 
-function FlowCanvas({ flow, flows, onSelectFlow, onNewFlow, tasks, events, selectedTaskId, onOpenTask, onError }) {
+function FlowCanvas({ flow, run: liveRun, flows, onSelectFlow, onNewFlow, tasks, events, selectedTaskId, onOpenTask, onError }) {
   const byId = React.useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
   const [nodes, setNodes] = React.useState(flow.nodes);
   // The node being dragged lives in a ref: pointer events can come faster than React renders.
@@ -218,13 +219,15 @@ function FlowCanvas({ flow, flows, onSelectFlow, onNewFlow, tasks, events, selec
             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
           <datalist id={`actors-${flow.id}`}>{actors.map((a) => <option key={a} value={a} />)}</datalist>
         </label>
-        {flow.status === 'running'
-          ? <button className="btn" onClick={() => run('paused')}><Pause size={14} /> Tạm dừng</button>
-          : <button className="btn btn-approve" disabled={!live.length || flow.state === 'done'} onClick={() => run('running')}><Play size={14} /> Chạy</button>}
+        {!liveRun && flow.state !== 'done' && live.length > 0 && <RunButton flowId={flow.id} title={flow.title} onError={onError} />}
+        {!liveRun && (flow.status === 'running'
+          ? <button className="btn" title="Ngừng giao luồng cho agent bên ngoài" onClick={() => run('paused')}><Pause size={14} /> Tạm dừng</button>
+          : <button className="btn" title="Chỉ giao luồng cho actor ở ô 'Giao cho'; agent đó nhận ở phiên Claude Code bạn tự mở" disabled={!live.length || flow.state === 'done'} onClick={() => run('running')}><Play size={14} /> Mở cho agent ngoài</button>)}
         <button className="icon-btn" title="Sắp xếp tự động theo mũi tên" aria-label="Sắp xếp tự động" onClick={autoLayout}><LayoutGrid size={16} /></button>
         <button className="icon-btn" title="Xoá luồng" aria-label="Xoá luồng" onClick={remove}><Trash2 size={16} /></button>
       </div>
 
+      {liveRun && <div className="flow-run"><RunLine run={liveRun} onError={onError} /></div>}
       <div className="flow-body">
         {notice && (
           <div className="flow-notice" role="status" onMouseEnter={() => setNotice({ ...notice })}>{notice.text}</div>

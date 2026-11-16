@@ -11,12 +11,15 @@ export const ORIGINS = ['plan', 'user', 'agent'];
 export const HUMAN = 'human';
 export const FLOW_STATUSES = ['draft', 'running', 'paused'];
 export const AFTER_MODES = ['all', 'any'];
+// A run is one Claude Code session the tracker starts for a task or a flow (server/runner.js).
+export const RUN_STATUSES = ['queued', 'running', 'stopping', 'done', 'failed', 'stopped', 'interrupted'];
+export const ACTIVE_RUN = ['queued', 'running', 'stopping'];
 
 // Relative weight of a task in progress numbers. An unsized task counts as M.
 const WEIGHT = { S: 1, M: 3, L: 8 };
 export const weightOf = (task) => WEIGHT[task.size] ?? WEIGHT.M;
 
-export const emptyWorkspace = () => ({ version: 2, seq: 0, projects: [], tasks: [], flows: [], events: [], receipts: [] });
+export const emptyWorkspace = () => ({ version: 2, seq: 0, projects: [], tasks: [], flows: [], runs: [], events: [], receipts: [] });
 
 export function childrenOf(tasks, parentId, projectId) {
   return tasks
@@ -180,6 +183,7 @@ export function projectSummary(workspace, projectId) {
     needsUser: work.filter(needsUser).length,
     needsAgent: work.filter(needsAgent).length,
     awaitingReview: tasks.filter(awaitingReview).length,
+    running: (workspace.runs || []).filter((r) => r.projectId === projectId && ACTIVE_RUN.includes(r.status)).length,
     lastEventAt: lastEvent?.at ?? null,
   };
 }
@@ -218,7 +222,7 @@ export function validateWorkspace(w) {
     throw Error(`Invalid workspace: ${why}`);
   };
   if (!w || w.version !== 2) bad('version');
-  for (const key of ['projects', 'tasks', 'flows', 'events', 'receipts']) if (!Array.isArray(w[key])) bad(key);
+  for (const key of ['projects', 'tasks', 'flows', 'runs', 'events', 'receipts']) if (!Array.isArray(w[key])) bad(key);
   const projects = new Set();
   for (const p of w.projects) {
     if (!isText(p.id, 100) || !p.id || projects.has(p.id) || !isText(p.title, 200) || !p.title.trim()) bad(`project ${p?.id}`);
@@ -252,6 +256,10 @@ export function validateWorkspace(w) {
     if (!FLOW_STATUSES.includes(f.status) || !Array.isArray(f.nodes)) bad(`flow ${f.id}: status/nodes`);
     if (f.nodes.some((n) => byId.get(n.taskId)?.projectId !== f.projectId || !Number.isFinite(n.x) || !Number.isFinite(n.y))) bad(`flow ${f.id}: nodes`);
     flows.add(f.id);
+  }
+  for (const r of w.runs) {
+    if (!isText(r.id, 100) || !projects.has(r.projectId) || !RUN_STATUSES.includes(r.status)) bad(`run ${r?.id}`);
+    if (!['task', 'flow'].includes(r.target?.kind) || !isText(r.target.id, 100)) bad(`run ${r.id}: target`);
   }
   return w;
 }

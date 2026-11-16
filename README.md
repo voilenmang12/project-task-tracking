@@ -46,6 +46,27 @@ Mở http://127.0.0.1:5173. Dịch vụ chỉ lắng nghe 127.0.0.1. `PORT` đ�
 
 Trang tự cập nhật ngay khi agent ghi (server-sent events).
 
+## Chạy bằng agent
+
+Nút ▶ trên một việc (rê chuột vào dòng, hoặc "Chạy bằng agent" trong chi tiết) và "Chạy bằng agent" trên thanh của
+một luồng mở một phiên **Claude Code** (`claude -p`) trong thư mục repo của dự án (`repo`, tính từ thư mục chứa
+tracker; `NHANH_WORKSPACE` đổi gốc này). Bạn có thể dặn thêm agent một đoạn ngắn trước khi chạy.
+
+- Phiên đó là trưởng nhánh: tạo nhánh git theo luật của repo, `task.start`, chia việc lớn thành việc con và giao cho
+  agent con, báo tiến độ, đóng việc kèm bằng chứng, merge theo luật của repo. Với luồng: làm lần lượt các việc
+  `NEXT` của luồng cho tới hết. Không ai trả lời trong lúc chạy: cần quyết định thì `task.ask` kèm phương án mặc
+  định rồi làm tiếp; kẹt thì `task.block` rồi dừng.
+- Actor của phiên là `run-<n>`, hiện là **Nhánh #n**. Quyền là quyền trong `.claude/settings.json` của repo; lệnh
+  ngoài danh sách cho phép bị từ chối chứ không chờ.
+- Mỗi repo chạy một lượt một lúc; lượt khác hiện "Chờ lượt" và tự bắt đầu sau.
+- **Hiển thị**: mục **Đang chạy** ở thanh bên (số lượt đang chạy), đầu trang dự án, nhãn "Nhánh #n đang chạy" trên
+  dòng việc, thẻ trên Tổng quan. Nút **Log** mở nhật ký trực tiếp (lệnh, agent con, lỗi) và báo cáo cuối; **Dừng**
+  tắt phiên, việc dở trở về "Chờ làm". Phiên đã xong mở lại được bằng `claude --resume <id>`.
+- **Cần trước khi dùng**: `claude` CLI đã đăng nhập (mở terminal, chạy `claude`, gõ `/login`) và thư mục repo đã
+  được tin cậy (chạy `claude` trong thư mục đó một lần). Thiếu một trong hai thì lượt chạy báo lỗi kèm cách sửa.
+- Khởi động lại tracker không giết phiên đang chạy: tracker theo dõi tới khi nó kết thúc, nhưng không còn đọc được
+  log của nó.
+
 ## Mô hình
 
 - **Dự án**: `id`, tên, giai đoạn (`idea`, `brief`, `gdd`, `playtest`, `production`, `release`, `live`), ghi chú,
@@ -74,6 +95,7 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 | `task.add` | Việc phát sinh; agent phải ghi lý do |
 | `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
 | `flow.create` / `flow.update` / `flow.delete` | Tạo luồng, sửa node, giao actor, chạy hoặc tạm dừng; chỉ bạn xoá luồng |
+| `run.start` / `run.stop` / `runs.list` | Bạn chạy hoặc dừng một phiên Claude Code cho một việc hoặc một luồng; agent không gọi được |
 | `task.approve` | Bạn duyệt mục agent đề xuất (cùng các mục bên trong và mốc phía trên); chỉ người dùng gọi được |
 | `task.block` / `task.unblock` / `task.release` / `task.reopen` / `task.drop` | Chặn, gỡ chặn, trả lại, mở lại, bỏ |
 | `project.log` | Một dòng nhật ký cho thay đổi nhỏ không cần task |

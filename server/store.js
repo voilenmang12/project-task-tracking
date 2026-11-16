@@ -3,11 +3,13 @@
 //   <root>/workspace.backup.json   the state before the last write
 //   <root>/workspace.v1.json       the untouched file of tracker v1, kept after the migration
 //   <root>/workspace.v2.0.json     the untouched file of tracker 2.0/2.1, kept when flows were added (2.2.0)
+//   <root>/workspace.v2.2.json     the untouched file of tracker 2.2/2.3, kept when runs were added (2.4.0)
+//   <root>/runs/<id>.log           what each agent run printed (server/runner.js)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { emptyWorkspace, validateWorkspace } from '../shared/model.js';
-import { addFlows, migrateV1 } from './migrate.js';
+import { addFlows, addRuns, migrateV1 } from './migrate.js';
 
 async function atomicWrite(file, text) {
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -31,12 +33,19 @@ export function createStore(root) {
       throw Error(`Cannot read ${file}: ${e.message}. Nothing was overwritten; restore workspace.backup.json if needed.`);
     }
     if (raw.version === 2) {
-      const upgraded = addFlows(raw);
-      if (!upgraded) return (cache = validateWorkspace(raw));
-      const kept = path.join(root, 'workspace.v2.0.json');
-      try { await fs.access(kept); } catch { await fs.copyFile(file, kept); }
-      cache = validateWorkspace(upgraded);
-      await atomicWrite(file, JSON.stringify(cache, null, 2));
+      // Each step adds what a newer tracker stores, and keeps the file as it was before that step.
+      let current = raw;
+      let changed = false;
+      for (const [step, keptName] of [[addFlows, 'workspace.v2.0.json'], [addRuns, 'workspace.v2.2.json']]) {
+        const upgraded = step(current);
+        if (!upgraded) continue;
+        const kept = path.join(root, keptName);
+        try { await fs.access(kept); } catch { await fs.writeFile(kept, JSON.stringify(current, null, 2), 'utf8'); }
+        current = upgraded;
+        changed = true;
+      }
+      cache = validateWorkspace(current);
+      if (changed) await atomicWrite(file, JSON.stringify(cache, null, 2));
       return cache;
     }
     // Tracker v1 wrote {revision, data: {version: 1, ...}}. Keep that file and convert it once.

@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Records a project's plan, progress and proof in the Nhanh local tracker, where the user follows the work of autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.2.0"
+  version: "2.3.0"
 ---
 
 # Nhánh project tracking
@@ -65,6 +65,14 @@ Which tasks are tracked, how to write a plan, how to add work found on the way a
 | Work stops unfinished | `task.release` with a note; the task goes back to `todo` |
 | A done task turns out broken | `task.reopen` with the reason |
 | An item will not be done | `task.drop` with the reason (never delete: only the user deletes) |
+
+## Started by the tracker
+
+When `NHANH_RUN` is set, the tracker started this session because the user pressed Run: your actor is in
+`NHANH_ACTOR` (`run-<n>`), nobody reads the chat, and the prompt names the task or flow. Lead it: branch,
+`task.start`, split and delegate, report, close, merge by the repository's rules. Never wait for an answer:
+`task.ask` with your default and continue, or `task.block` and stop. Your final message is stored as the run's
+report: say what is done, the branches and commits, and what is left.
 
 ## Rules that do not bend
 
