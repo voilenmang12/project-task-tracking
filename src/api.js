@@ -18,7 +18,14 @@ export async function call(name, args = {}) {
   let res = await send();
   if (res.status === 403) { token = null; res = await send(); } // the server restarted: take a new token once
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw Error(body.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = Error(body.error || `HTTP ${res.status}`);
+    if (body.live) {
+      error.live = body.live; // work in progress blocks this change (live.js asks the user to stop it)
+      error.retry = { name, args };
+    }
+    throw error;
+  }
   return body.result;
 }
 

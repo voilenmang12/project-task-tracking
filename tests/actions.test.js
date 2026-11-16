@@ -71,7 +71,10 @@ test('another agent cannot touch work in progress, unless it takes over', () => 
   rejects(() => run('task.done', { taskId: 'move', summary: 'x', check: 'all', evidence: { notes: 'x' } }, OTHER), /being done/, 409);
   run('task.start', { taskId: 'move', takeover: true }, OTHER);
   assert.equal(w.tasks.find((t) => t.id === 'move').owner, 'claude-b');
-  run('task.update', { taskId: 'move', title: 'Player movement' }, USER); // the user always can
+  // The user does not change work in progress either: they stop it first, then change it.
+  rejects(() => run('task.update', { taskId: 'move', title: 'Player movement' }, USER), /being worked on by claude-b/, 423);
+  run('work.stop', { taskId: 'move' }, USER);
+  run('task.update', { taskId: 'move', title: 'Player movement' }, USER);
 });
 
 test('work added by an agent needs a reason; a request from the user lands in the inbox', () => {
@@ -407,4 +410,105 @@ test('the user approves a flow in the UI; an agent changing an idle flow propose
   assert.deepEqual([f.reports.at(-1).by, f.reports.at(-1).fromRun], [r.actor, r.id]);
   rejects(() => run('plan.apply', { projectId: 'g', nodes: [{ id: 'move', title: 'Movement', after: ['combat'] }] }), /loop/, 409);
   validateWorkspace(w);
+});
+
+const LOCKED = 423;
+
+test('live work: changes to a task an agent is doing are refused until the user stops it', () => {
+  const { w, run } = workspace();
+  run('task.add', { projectId: 'g', parentId: 'm1', id: 'prep', title: 'Input map', size: 'S' }, USER);
+  run('task.start', { taskId: 'prep' });
+  run('task.done', { taskId: 'prep', summary: 'Keys mapped' });
+  run('task.update', { taskId: 'move', after: ['prep'] }, USER);
+  run('task.start', { taskId: 'move' }); // claude-a is doing "move" now
+
+  const blocked = [
+    ['task.update', { taskId: 'move', title: 'Walk' }],
+    ['task.update', { taskId: 'move', after: [] }],
+    ['task.update', { taskId: 'move', criteria: ['Only this'] }],
+    ['task.move', { taskId: 'move', parentId: 'm2' }],
+    ['task.move', { taskId: 'hub', parentId: 'move' }],
+    ['task.add', { projectId: 'g', parentId: 'move', title: 'Sprint' }],
+    ['task.drop', { taskId: 'move', reason: 'cut' }],
+    ['task.delete', { taskId: 'm1' }],
+    ['task.done', { taskId: 'move', summary: 'x', check: 'all' }],
+    ['task.start', { taskId: 'move' }],
+    ['task.reopen', { taskId: 'prep', reason: 'redo' }], // "move" runs after it
+    ['plan.apply', { projectId: 'g', nodes: [{ id: 'move', title: 'Walk' }] }],
+    ['plan.apply', { projectId: 'g', nodes: [{ id: 'move', title: 'Movement', children: [{ id: 'run-anim', title: 'Run' }] }] }],
+  ];
+  for (const [name, args] of blocked) {
+    assert.throws(() => run(name, args, USER), (e) => e.status === LOCKED && e.details.live.taskId === 'move', `${name} ${JSON.stringify(args)}`);
+  }
+  // The session doing it still works on it; the user still answers, unblocks and adds elsewhere.
+  run('task.update', { taskId: 'move', description: 'WASD and arrows' });
+  run('task.add', { projectId: 'g', parentId: 'm2', title: 'Settings' }, USER);
+
+  // Stop, then the change goes through; the agent may not write to it again without the user's word.
+  const out = run('work.stop', { taskId: 'move', reason: 'Changing the scope' }, USER);
+  assert.deepEqual(out.tasks, ['move']);
+  const t = w.tasks.find((x) => x.id === 'move');
+  assert.deepEqual([t.status, t.owner, t.stopped.owner], ['todo', null, 'claude-a']);
+  run('task.update', { taskId: 'move', title: 'Walk' }, USER);
+  rejects(() => run('task.progress', { taskId: 'move', note: 'still going' }), /user stopped/, 409);
+  rejects(() => run('task.start', { taskId: 'move' }), /userSaid/, 409);
+  assert.ok(!nextTasks(w, 'g').some((x) => x.id === 'move'), 'a stopped task is not offered as NEXT');
+  run('task.start', { taskId: 'move', userSaid: 'ok làm tiếp đi' });
+  assert.equal(t.stopped, undefined);
+  assert.match(w.events.filter((e) => e.type === 'note').at(-1).text, /ok làm tiếp đi/);
+  validateWorkspace(w);
+});
+
+test('live work: a running flow belongs to its session; the user stops the flow to change it', () => {
+  const { w, run } = workspace();
+  const f = run('flow.create', { projectId: 'g', id: 'f', title: 'UI' }, USER);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }] }, USER);
+  run('flow.update', { flowId: 'f', status: 'running', userSaid: 'chạy đi' }); // claude-a runs it
+  run('task.start', { taskId: 'hub' });
+
+  const blocked = [
+    ['task.update', { taskId: 'hub', title: 'Home' }],
+    ['task.add', { projectId: 'g', parentId: 'hub', title: 'Badge' }],
+    ['task.move', { taskId: 'hub', parentId: 'm1' }],
+    ['flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'combat', x: 300, y: 0 }] }],
+    ['flow.update', { flowId: 'f', assignee: 'claude-b' }],
+    ['flow.update', { flowId: 'f', status: 'draft' }],
+    ['flow.delete', { flowId: 'f' }],
+    ['run.start', { flowId: 'f' }],
+    ['plan.apply', { projectId: 'g', flow: { id: 'f', title: 'UI' }, nodes: [{ id: 'combat', title: 'Combat' }] }],
+    ['project.update', { projectId: 'g', archived: true }],
+  ];
+  for (const [name, args] of blocked) {
+    assert.throws(() => run(name, args, USER), (e) => e.status === LOCKED && e.details.live.flowId === 'f', `${name} ${JSON.stringify(args)}`);
+  }
+  rejects(() => run('task.update', { taskId: 'hub', title: 'Home' }, OTHER), /being done by claude-a/, 409);
+  rejects(() => run('task.add', { projectId: 'g', parentId: 'hub', title: 'Badge', reason: 'r' }, OTHER), /running flow/, LOCKED);
+  rejects(() => run('task.start', { taskId: 'hub' }, OTHER), /being done by claude-a/, 409);
+  // Moving nodes on the board and renaming the flow change nothing that runs.
+  run('flow.update', { flowId: 'f', title: 'UI pass', nodes: [{ taskId: 'hub', x: 80, y: 40 }] }, USER);
+
+  run('work.stop', { flowId: 'f' }, USER);
+  assert.deepEqual([f.status, w.tasks.find((t) => t.id === 'hub').status], ['paused', 'todo']);
+  run('task.update', { taskId: 'hub', title: 'Home' }, USER);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'combat', x: 300, y: 0 }] }, USER);
+  assert.ok(!nextTasks(w, 'g', 5, 'claude-b').some((t) => t.id === 'combat'), 'a paused flow keeps its tasks from other agents');
+  // Saying "go on" in chat starts the flow again and lifts the stop on its tasks.
+  run('flow.update', { flowId: 'f', status: 'running', userSaid: 'tiếp tục' });
+  assert.equal(w.tasks.find((t) => t.id === 'hub').stopped, undefined);
+  validateWorkspace(w);
+});
+
+test('live work: a tracker run holds its task and its project folder until it is stopped', () => {
+  const { w, run } = workspace();
+  run('project.update', { projectId: 'g', repo: 'Game' }, USER);
+  const r = run('run.start', { taskId: 'combat' }, USER);
+  rejects(() => run('task.update', { taskId: 'combat', size: 'S' }, USER), /being worked on by run-1/, LOCKED);
+  rejects(() => run('project.update', { projectId: 'g', repo: 'Elsewhere' }, USER), /run-1 is running/, LOCKED);
+  run('project.update', { projectId: 'g', stage: 'production' }, USER); // other fields stay free
+  const out = run('work.stop', { taskId: 'combat' }, USER);
+  assert.deepEqual(out.runs, [r.id]);
+  assert.equal(w.runs[0].status, 'stopped');
+  run('task.update', { taskId: 'combat', size: 'S' }, USER);
+  run('project.update', { projectId: 'g', repo: 'Elsewhere' }, USER);
+  rejects(() => run('work.stop', { taskId: 'combat' }), /only the user/, 403);
 });

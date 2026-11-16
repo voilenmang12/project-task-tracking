@@ -223,7 +223,7 @@ function FlowCanvas({ flow, run: liveRun, runs = [], flows, onSelectFlow, onNewF
         </label>
         {!liveRun && flow.status !== 'running' && flow.state !== 'done' && live.length > 0 && <RunButton flowId={flow.id} title={flow.title} onError={onError} />}
         {!liveRun && (flow.status === 'running'
-          ? <button className="btn" title="Ngừng giao luồng cho agent bên ngoài" onClick={() => run('paused')}><Pause size={14} /> Tạm dừng</button>
+          ? <button className="btn" title="Dừng luồng: tạm dừng, trả việc đang làm dở về Chờ làm" onClick={() => call('work.stop', { flowId: flow.id, reason: 'Stopped by the user from the flow board' }).catch(onError)}><Pause size={14} /> Dừng</button>
           : <button className="btn" title="Chỉ giao luồng cho actor ở ô 'Giao cho'; agent đó nhận ở phiên Claude Code bạn tự mở" disabled={!live.length || flow.state === 'done'} onClick={() => run('running')}><Play size={14} /> Mở cho agent ngoài</button>)}
         <button className="btn" title="Báo cáo tổng và từng việc của luồng" onClick={() => setShowReport(true)}>
           <FileText size={14} /> Báo cáo{flow.reports?.length ? ` (${flow.reports.length})` : ''}

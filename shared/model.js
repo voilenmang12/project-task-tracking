@@ -212,7 +212,7 @@ export function nextTasks(workspace, projectId, limit = 5, actor = null) {
   };
   const reserved = reservedByFlows(workspace, projectId, actor);
   const open = ordered.filter((t) => t.kind === 'task' && t.status === 'todo' && !hasOpenChild(t) && !underReview(t) &&
-    !waitingOn(tasks, t).length && !reserved.has(t.id));
+    !waitingOn(tasks, t).length && !reserved.has(t.id) && !t.stopped);
   return [...open.filter((t) => t.origin === 'user'), ...open.filter((t) => t.origin !== 'user')].slice(0, limit);
 }
 
@@ -370,11 +370,16 @@ export function sessionsOf(workspace, projectId) {
   return [...out.values()];
 }
 
-/** Task ids that a running flow keeps for its own actor, so other agents leave them alone. */
+/**
+ * Task ids no agent should pick up on its own: those of a running flow given to another actor, and those of a flow
+ * the user paused.
+ */
 export function reservedByFlows(workspace, projectId, actor) {
   const out = new Set();
   for (const f of workspace.flows || []) {
-    if (f.projectId !== projectId || f.status !== 'running' || !f.assignee || f.assignee === actor) continue;
+    if (f.projectId !== projectId) continue;
+    const others = f.status === 'running' && f.assignee && f.assignee !== actor;
+    if (!others && f.status !== 'paused') continue;
     for (const t of flowTasks(workspace, f)) out.add(t.id);
   }
   return out;

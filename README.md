@@ -63,6 +63,16 @@ Tracker thay cho plan mode: kế hoạch nằm trên tracker để bạn duyệt
 
 Agent không tự chạy một luồng khi bạn chưa đồng ý; lời đồng ý trong chat được trích nguyên văn vào Nhật ký.
 
+## Việc đang chạy bị khoá
+
+Phần việc một phiên đang làm (việc "đang làm", việc có lượt chạy, mọi thứ trong một luồng đang chạy) chỉ phiên đó sửa
+được. Bạn hay agent khác sửa, chuyển, nối mũi tên, thêm việc con, bỏ, xoá, đánh dấu xong, mở lại việc mà nó đang chờ,
+đổi node, người được giao hay xoá luồng, đổi repo hay lưu trữ dự án khi đang chạy: tracker từ chối (423). Trên UI hiện
+hộp thoại nói cái gì đang chạy, nút **Dừng rồi làm tiếp** dừng nó (`work.stop`) rồi làm lại thao tác. Dừng: luồng tạm
+dừng, lượt chạy bị tắt, việc dở trở về "Chờ làm" với nhãn "bạn đã dừng"; agent không ghi tiếp được vào việc đó, chỉ
+làm lại khi bạn bấm Chạy hoặc bảo nó trong chat. Kéo vị trí node, đổi tên luồng, trả lời câu hỏi, gỡ chặn, duyệt vẫn
+làm được khi đang chạy. Dòng việc đang khoá có biểu tượng 🔒.
+
 ## Chạy bằng agent
 
 Nút ▶ trên một việc (rê chuột vào dòng, hoặc "Chạy bằng agent" trong chi tiết) và "Chạy bằng agent" trên thanh của
@@ -113,6 +123,7 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 | `task.add` | Việc phát sinh; agent phải ghi lý do |
 | `task.ask` / `task.answer` / `task.ack` | Agent hỏi, bạn trả lời, agent xác nhận đã đọc |
 | `flow.create` / `flow.update` / `flow.delete` | Tạo luồng, sửa node, giao actor, chạy hoặc tạm dừng; chỉ bạn xoá luồng |
+| `work.stop` | Bạn dừng việc hoặc luồng đang chạy để sửa |
 | `flow.approve` / `flow.report` / `activity` | Bạn duyệt luồng; agent ghi báo cáo tổng của luồng; các phiên chat đang giữ việc |
 | `run.start` / `run.stop` / `runs.list` | Bạn chạy hoặc dừng một phiên Claude Code cho một việc hoặc một luồng; agent không gọi được |
 | `task.approve` | Bạn duyệt mục agent đề xuất (cùng các mục bên trong và mốc phía trên); chỉ người dùng gọi được |
