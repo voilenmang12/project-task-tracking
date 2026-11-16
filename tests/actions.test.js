@@ -459,10 +459,10 @@ test('live work: changes to a task an agent is doing are refused until the user 
   validateWorkspace(w);
 });
 
-test('live work: a running flow belongs to its session; the user stops the flow to change it', () => {
+test('live work: in a running flow only the task in work is locked; the flow itself belongs to its session', () => {
   const { w, run } = workspace();
   const f = run('flow.create', { projectId: 'g', id: 'f', title: 'UI' }, USER);
-  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }] }, USER);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'move', x: 300, y: 0 }] }, USER);
   run('flow.update', { flowId: 'f', status: 'running', userSaid: 'chạy đi' }); // claude-a runs it
   run('task.start', { taskId: 'hub' });
 
@@ -470,32 +470,76 @@ test('live work: a running flow belongs to its session; the user stops the flow 
     ['task.update', { taskId: 'hub', title: 'Home' }],
     ['task.add', { projectId: 'g', parentId: 'hub', title: 'Badge' }],
     ['task.move', { taskId: 'hub', parentId: 'm1' }],
-    ['flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'combat', x: 300, y: 0 }] }],
+    ['flow.update', { flowId: 'f', nodes: [{ taskId: 'move', x: 300, y: 0 }] }], // removing the node in work
+  ];
+  for (const [name, args] of blocked) {
+    assert.throws(() => run(name, args, USER), (e) => e.status === LOCKED && e.details.live.taskId === 'hub', `${name} ${JSON.stringify(args)}`);
+  }
+  const flowLevel = [
     ['flow.update', { flowId: 'f', assignee: 'claude-b' }],
     ['flow.update', { flowId: 'f', status: 'draft' }],
     ['flow.delete', { flowId: 'f' }],
     ['run.start', { flowId: 'f' }],
-    ['plan.apply', { projectId: 'g', flow: { id: 'f', title: 'UI' }, nodes: [{ id: 'combat', title: 'Combat' }] }],
     ['project.update', { projectId: 'g', archived: true }],
   ];
-  for (const [name, args] of blocked) {
+  for (const [name, args] of flowLevel) {
     assert.throws(() => run(name, args, USER), (e) => e.status === LOCKED && e.details.live.flowId === 'f', `${name} ${JSON.stringify(args)}`);
   }
+  // What has not started yet stays free: its wording, its arrows, new or removed nodes, sub-tasks.
+  run('task.update', { taskId: 'move', title: 'Walk', after: ['combat'] }, USER);
+  run('task.add', { projectId: 'g', parentId: 'move', title: 'Sprint' }, USER);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'move', x: 300, y: 0 }, { taskId: 'combat', x: 0, y: 200 }] }, USER);
+  run('plan.apply', { projectId: 'g', flow: { id: 'f', title: 'UI' }, nodes: [{ id: 'm2', title: 'UI' }] }, USER);
+  run('flow.update', { flowId: 'f', title: 'UI pass', nodes: [{ taskId: 'hub', x: 80, y: 40 }, { taskId: 'move', x: 300, y: 0 }, { taskId: 'combat', x: 0, y: 200 }, { taskId: 'm2', x: 0, y: 400 }] }, USER);
+  // Another agent still keeps out of the flow's set of nodes and of its task in work.
+  rejects(() => run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'move', x: 300, y: 0 }, { taskId: 'm2', x: 0, y: 400 }] }, OTHER), /running flow/, LOCKED);
   rejects(() => run('task.update', { taskId: 'hub', title: 'Home' }, OTHER), /being done by claude-a/, 409);
-  rejects(() => run('task.add', { projectId: 'g', parentId: 'hub', title: 'Badge', reason: 'r' }, OTHER), /running flow/, LOCKED);
-  rejects(() => run('task.start', { taskId: 'hub' }, OTHER), /being done by claude-a/, 409);
-  // Moving nodes on the board and renaming the flow change nothing that runs.
-  run('flow.update', { flowId: 'f', title: 'UI pass', nodes: [{ taskId: 'hub', x: 80, y: 40 }] }, USER);
 
-  run('work.stop', { flowId: 'f' }, USER);
-  assert.deepEqual([f.status, w.tasks.find((t) => t.id === 'hub').status], ['paused', 'todo']);
+  // Stopping the task stops only it: the flow goes on with its other tasks.
+  run('work.stop', { taskId: 'hub' }, USER);
+  assert.deepEqual([f.status, w.tasks.find((t) => t.id === 'hub').status], ['running', 'todo']);
   run('task.update', { taskId: 'hub', title: 'Home' }, USER);
-  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'hub', x: 0, y: 0 }, { taskId: 'combat', x: 300, y: 0 }] }, USER);
-  assert.ok(!nextTasks(w, 'g', 5, 'claude-b').some((t) => t.id === 'combat'), 'a paused flow keeps its tasks from other agents');
-  // Saying "go on" in chat starts the flow again and lifts the stop on its tasks.
+  const d = run('digest', { projectId: 'g' }).flows[0];
+  assert.ok(!d.next.some((t) => t.id === 'hub'), 'the stopped task is not handed out by its flow');
+  assert.ok(d.waiting.some((t) => t.id === 'hub' && t.stopped), 'it shows as waiting for the user');
+  // Stopping the flow pauses it and keeps its tasks from other agents.
+  run('work.stop', { flowId: 'f' }, USER);
+  assert.equal(f.status, 'paused');
+  assert.ok(!nextTasks(w, 'g', 5, 'claude-b').some((t) => t.id === 'combat'));
   run('flow.update', { flowId: 'f', status: 'running', userSaid: 'tiếp tục' });
   assert.equal(w.tasks.find((t) => t.id === 'hub').stopped, undefined);
   validateWorkspace(w);
+});
+
+test('a stopped task is resumed, not redone: branch, done criteria, progress and the user\'s changes come back', () => {
+  const { w, run } = workspace();
+  run('task.start', { taskId: 'move', branch: 'task/move' });
+  run('task.progress', { taskId: 'move', note: 'Keys move the player on the Hub', check: [1] });
+  run('work.stop', { taskId: 'move', reason: 'Add gamepad support' }, USER);
+  run('task.update', { taskId: 'move', title: 'Movement (keys and gamepad)', criteria: [
+    { id: 'c1', text: 'Keys move the player', done: true },
+    { id: 'c2', text: 'Collision test passes' },
+    { text: 'A gamepad moves the player' },
+  ] }, USER);
+  const edit = w.events.filter((e) => e.type === 'edited').at(-1);
+  assert.match(edit.text, /title "Movement" → "Movement \(keys and gamepad\)"/);
+  assert.match(edit.text, /criterion added "A gamepad moves the player"/);
+
+  const before = run('digest', { projectId: 'g' }).next.concat(run('digest', { projectId: 'g' }).inbox);
+  assert.ok(!before.some((t) => t.id === 'move'), 'stopped: not offered');
+  const stopped = run('project.get', { projectId: 'g' }).tasks.find((t) => t.id === 'move');
+  assert.ok(stopped.stopped);
+
+  const back = run('task.start', { taskId: 'move', userSaid: 'làm tiếp đi' });
+  assert.equal(back.resume.branch, 'task/move');
+  assert.deepEqual(back.resume.criteriaDone, ['Keys move the player']);
+  assert.deepEqual(back.resume.criteriaOpen, ['Collision test passes', 'A gamepad moves the player']);
+  assert.deepEqual(back.resume.progress, ['Keys move the player on the Hub']);
+  assert.equal(back.resume.changedSinceStop.length, 1);
+  assert.equal(back.resume.stopped.reason, 'Add gamepad support');
+  const t = w.tasks.find((x) => x.id === 'move');
+  assert.deepEqual([t.status, t.branch, t.lastStop.owner], ['doing', 'task/move', 'claude-a']);
+  assert.match(w.events.filter((e) => e.type === 'started').at(-1).text, /Resumed on task\/move/);
 });
 
 test('live work: a tracker run holds its task and its project folder until it is stopped', () => {
@@ -511,4 +555,22 @@ test('live work: a tracker run holds its task and its project folder until it is
   run('task.update', { taskId: 'combat', size: 'S' }, USER);
   run('project.update', { projectId: 'g', repo: 'Elsewhere' }, USER);
   rejects(() => run('work.stop', { taskId: 'combat' }), /only the user/, 403);
+});
+
+test('a stop lifted by the user\'s word on the flow still resumes with the changes', () => {
+  const { w, run } = workspace();
+  run('flow.create', { projectId: 'g', id: 'f', title: 'Core' }, USER);
+  run('flow.update', { flowId: 'f', nodes: [{ taskId: 'move', x: 0, y: 0 }] }, USER);
+  run('flow.update', { flowId: 'f', status: 'running', userSaid: 'go' });
+  run('task.start', { taskId: 'move', branch: 'task/move' });
+  run('work.stop', { taskId: 'move' }, USER);
+  run('task.update', { taskId: 'move', criteria: ['Keys move the player', 'Collision test passes', 'Gamepad works'] }, USER);
+  assert.equal(w.tasks.find((t) => t.id === 'move').criteria.at(-1).id, 'c3', 'criteria get readable ids');
+  run('work.stop', { flowId: 'f' }, USER);
+  run('flow.update', { flowId: 'f', status: 'running', userSaid: 'làm tiếp' }); // lifts the stop on its tasks
+  const back = run('task.start', { taskId: 'move' });
+  assert.equal(back.resume.branch, 'task/move');
+  assert.match(back.resume.changedSinceStop.join(' '), /criterion added "Gamepad works"/);
+  run('task.release', { taskId: 'move' });
+  assert.equal(run('task.start', { taskId: 'move' }).resume.changedSinceStop.length, 0, 'the changes are given once');
 });

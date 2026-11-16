@@ -138,8 +138,10 @@ function makeContext(w, actor, now) {
     }
   };
   // ---- live work ----------------------------------------------------------------------------------------------
-  // Work a session is doing now: a task in "doing", a task a tracker run was started for, anything inside a running
-  // flow. Only that session changes it; anyone else (the user too) stops it first with work.stop.
+  // Work a session is doing now: a task in "doing" and a task a tracker run was started for, with what is under
+  // them. Only that session changes it; anyone else (the user too) stops it first with work.stop. The rest of a
+  // running flow stays free to change: a task's order is checked again when it is started. Changes to the flow
+  // itself (who runs it, draft, delete, Run) are guarded by guardFlow.
   const flowScope = (f) => {
     const ids = new Set();
     for (const n of f.nodes) {
@@ -150,21 +152,22 @@ function makeContext(w, actor, now) {
   };
   const locksOf = (t) => {
     const locks = [];
-    if (t.status === 'doing' && t.owner && t.owner !== HUMAN) locks.push({ kind: 'task', taskId: t.id, title: t.title, owner: t.owner });
-    for (const r of w.runs) {
-      if (ACTIVE_RUN.includes(r.status) && r.target.kind === 'task' && r.target.id === t.id) {
-        locks.push({ kind: 'run', taskId: t.id, title: t.title, owner: r.actor, runId: r.id });
+    for (let a = t; a; a = a.parentId ? w.tasks.find((x) => x.id === a.parentId) : null) {
+      if (a.status === 'doing' && a.owner && a.owner !== HUMAN) {
+        // A tracker run doing it: stopping the task ends that run (and pauses its flow, when it runs one).
+        const run = w.runs.find((r) => ACTIVE_RUN.includes(r.status) && r.actor === a.owner);
+        locks.push({
+          kind: 'task', taskId: a.id, title: a.title, owner: a.owner,
+          ...(run ? { runId: run.id, runFlowId: run.target.kind === 'flow' ? run.target.id : null } : {}),
+        });
+      }
+      for (const r of w.runs) {
+        if (ACTIVE_RUN.includes(r.status) && r.target.kind === 'task' && r.target.id === a.id) {
+          locks.push({ kind: 'run', taskId: a.id, title: a.title, owner: r.actor, runId: r.id });
+        }
       }
     }
-    for (const f of w.flows) {
-      if (f.status === 'running' && f.projectId === t.projectId && flowState(w, f).status !== 'done' && flowScope(f).has(t.id)) {
-        locks.push({ kind: 'flow', flowId: f.id, title: f.title, taskId: t.id, owner: f.assignee || null });
-      }
-    }
-    // The widest first: stopping a flow stops its tasks too, while stopping only a task would leave its flow
-    // handing it out again.
-    const rank = { flow: 0, run: 1, task: 2 };
-    return locks.sort((x, y) => rank[x.kind] - rank[y.kind]);
+    return locks.sort((x, y) => (x.kind === 'run' ? 0 : 1) - (y.kind === 'run' ? 0 : 1));
   };
   const refuse = (verb, lock, itemTitle) => {
     const who = lock.owner ? ` (${lock.owner})` : '';
@@ -234,6 +237,53 @@ function refuseRun(c, run, verb) {
   });
 }
 
+/** What an edit changed, one short line per field, for the journal and for a session resuming the task. */
+function describeChanges(was, t) {
+  const out = [];
+  const q = (s) => `"${String(s).slice(0, 80)}"`;
+  if (was.title !== t.title) out.push(`title ${q(was.title)} → ${q(t.title)}`);
+  if ((was.description || '') !== (t.description || '')) out.push('description changed');
+  if ((was.size || null) !== (t.size || null)) out.push(`size ${was.size || '?'} → ${t.size || '?'}`);
+  if (was.labels.join(',') !== (t.labels || []).join(',')) out.push(`labels: ${(t.labels || []).join(', ') || 'none'}`);
+  if (was.after.join(',') !== (t.after || []).join(',')) out.push(t.after?.length ? `runs after: ${t.after.join(', ')}` : 'no order arrows');
+  if (was.afterMode !== (t.afterMode || 'all')) out.push(`waits for ${t.afterMode === 'any' ? 'any one' : 'all'} of its predecessors`);
+  const before = new Map(was.criteria.map((x) => [x.id, x]));
+  const after = new Map(t.criteria.map((x) => [x.id, x]));
+  for (const x of t.criteria) {
+    const old = before.get(x.id);
+    if (!old) out.push(`criterion added ${q(x.text)}`);
+    else {
+      if (old.text !== x.text) out.push(`criterion ${q(old.text)} → ${q(x.text)}`);
+      if (old.done !== x.done) out.push(`criterion ${q(x.text)} ${x.done ? 'ticked' : 'unticked'}`);
+    }
+  }
+  for (const x of was.criteria) if (!after.has(x.id)) out.push(`criterion removed ${q(x.text)}`);
+  return out;
+}
+
+/** The user's word (in chat, or Run) lifts a stop; it is kept as lastStop so the next task.start can resume from it. */
+function liftStop(t) {
+  if (!t?.stopped) return;
+  t.lastStop = t.stopped;
+  delete t.stopped;
+}
+
+/** The changes made to a task since a moment (the stop), as journal lines. */
+const changedSince = (w, taskId, at) => w.events.filter((e) => e.taskId === taskId && e.type === 'edited' && e.at >= at).map((e) => e.text);
+
+/** What a session needs to pick a task up where it stopped: branch, criteria, last progress, the user's changes. */
+function resumeOf(w, t, stop) {
+  const events = w.events.filter((e) => e.taskId === t.id);
+  return {
+    branch: t.branch || null,
+    stopped: stop || null,
+    criteriaDone: t.criteria.filter((x) => x.done).map((x) => x.text),
+    criteriaOpen: t.criteria.filter((x) => !x.done).map((x) => x.text),
+    progress: events.filter((e) => e.type === 'progress').slice(-5).map((e) => e.text),
+    changedSinceStop: stop ? changedSince(w, t.id, stop.at) : [],
+  };
+}
+
 const MAX_REPORTS = 10;
 const lastReport = (f) => (f.reports?.length ? f.reports[f.reports.length - 1] : null);
 
@@ -253,7 +303,7 @@ function flowView(w, f, actor) {
     report: lastReport(f),
     next: st.next.map((t) => t.id),
     doing: st.doing.map((t) => t.id),
-    waiting: st.waiting.map((x) => ({ id: x.task.id, waitingOn: x.waitingOn })),
+    waiting: st.waiting.map((x) => ({ id: x.task.id, waitingOn: x.waitingOn, stopped: x.stopped })),
   };
 }
 
@@ -291,7 +341,7 @@ const ACTIONS = [
         id: t.id, title: t.title, size: t.size, status: t.status, owner: t.owner, branch: t.branch, origin: t.origin,
         criteria: t.criteria, description: t.description, question: t.question, parentId: t.parentId,
         ...(t.after?.length ? { after: t.after, afterMode: t.afterMode || 'all' } : {}),
-        ...(t.stopped ? { stopped: t.stopped } : {}),
+        ...(t.stopped ? { stopped: t.stopped, changedSinceStop: changedSince(w, t.id, t.stopped.at) } : {}),
       });
       const byId = new Map(w.tasks.map((t) => [t.id, t]));
       const flows = w.flows
@@ -490,7 +540,7 @@ const ACTIONS = [
         for (const x of ids) if (typeof x !== 'string' || c.task(x).projectId !== a.projectId) fail(`plan.apply: flow node "${x}" is not in this project`);
         let f = a.flow.id && c.w.flows.find((x) => x.id === a.flow.id);
         if (f && f.projectId !== a.projectId) fail(`plan.apply: flow "${f.id}" belongs to another project`, 409);
-        if (f && ids.some((x) => !f.nodes.some((n) => n.taskId === x))) c.guardFlow(f, 'plan.apply');
+        if (f && !c.isHuman && ids.some((x) => !f.nodes.some((n) => n.taskId === x))) c.guardFlow(f, 'plan.apply');
         if (!f) {
           let fid = a.flow.id || `${a.projectId}-flow-${slug(a.flow.title)}`;
           for (let k = 2; c.w.flows.some((x) => x.id === fid); k += 1) fid = `${a.flow.id || `${a.projectId}-flow-${slug(a.flow.title)}`}-${k}`;
@@ -542,6 +592,7 @@ const ACTIONS = [
       const t = c.task(a.taskId);
       c.mine(t, 'task.update'); c.sizeOk(a.size); c.labelsOk(a.labels);
       c.guard(t, 'task.update');
+      const was = { title: t.title, description: t.description, size: t.size, labels: [...(t.labels || [])], after: [...(t.after || [])], afterMode: t.afterMode || 'all', criteria: t.criteria.map((x) => ({ ...x })) };
       if (a.title) t.title = a.title.trim();
       if (a.description !== undefined && a.description !== null) t.description = a.description;
       if (a.size !== undefined && t.kind === 'task') t.size = a.size;
@@ -569,12 +620,14 @@ const ACTIONS = [
           const text = (typeof raw === 'string' ? raw : raw?.text || '').trim();
           if (!text || text.length > 500) fail('task.update: each criterion needs a text');
           const old = t.criteria.find((x) => x.id === raw?.id || x.text === text);
-          kept.push({ id: old?.id || `c${Date.now().toString(36)}${kept.length}`, text, done: raw?.done ?? old?.done ?? false });
+          const next = () => `c${[...t.criteria, ...kept].reduce((max, x) => Math.max(max, Number(String(x.id).slice(1)) || 0), 0) + 1}`;
+          kept.push({ id: old?.id || next(), text, done: raw?.done ?? old?.done ?? false });
         }
         t.criteria = kept;
       }
       t.updatedAt = c.now;
-      c.log('edited', t.projectId, t.id, a.after ? (t.after.length ? `Runs after: ${t.after.join(', ')}${t.afterMode === 'any' ? ' (any one)' : ''}` : 'No order arrows') : 'Edited');
+      const changes = describeChanges(was, t);
+      c.log('edited', t.projectId, t.id, changes.length ? changes.join('; ') : 'Edited', changes.length ? { changes } : undefined);
       return t;
     },
   },
@@ -593,9 +646,11 @@ const ACTIONS = [
       }
       const siblings = childrenOf(c.w.tasks, parentId, t.projectId).filter((x) => x.id !== t.id);
       siblings.splice(Math.min(Math.max(0, a.index ?? siblings.length), siblings.length), 0, t);
+      const moved = t.parentId !== parentId;
       t.parentId = parentId;
       siblings.forEach((x, i) => { x.order = i; });
       t.updatedAt = c.now;
+      if (moved) c.log('edited', t.projectId, t.id, `Moved under ${parentId ? `"${c.task(parentId).title}"` : 'the top level'}`);
       return t;
     },
   },
@@ -623,6 +678,9 @@ const ACTIONS = [
         if (!a.userSaid?.trim()) fail(`task.start: the user stopped "${t.id}". Start it again only when they say so: pass their words in userSaid.`, 409);
         c.log('note', t.projectId, t.id, `Restarted: the user said in chat to ${c.actor}: "${a.userSaid.trim()}"`);
       }
+      const stop = t.stopped || (t.lastStop && !t.lastStop.resumedAt ? t.lastStop : null);
+      const resume = t.startedAt ? resumeOf(c.w, t, stop) : null;
+      if (stop) t.lastStop = { ...stop, resumedAt: c.now };
       delete t.stopped;
       const takeover = t.status === 'doing' && t.owner && t.owner !== c.actor;
       t.status = 'doing';
@@ -632,8 +690,8 @@ const ACTIONS = [
       t.startedAt = t.startedAt || c.now;
       t.ack = true;
       t.updatedAt = c.now;
-      c.log('started', t.projectId, t.id, takeover ? 'Taken over' : `Started${t.branch ? ` on ${t.branch}` : ''}${t.agent ? ` (${t.agent})` : ''}`);
-      return t;
+      c.log('started', t.projectId, t.id, takeover ? 'Taken over' : `${resume ? 'Resumed' : 'Started'}${t.branch ? ` on ${t.branch}` : ''}${t.agent ? ` (${t.agent})` : ''}`);
+      return resume ? { ...t, resume } : t;
     },
   },
   {
@@ -844,15 +902,19 @@ const ACTIONS = [
         if (!a.userSaid?.trim()) fail('flow.update: an agent runs a flow only when the user said so; pass their words in userSaid', 403);
         approveFlow(c, f, `the user said in chat to ${c.actor}: "${a.userSaid.trim()}"`);
         if (a.assignee === undefined || a.assignee === null) a.assignee = c.actor;
-        for (const id of c.flowScope(f)) delete c.w.tasks.find((x) => x.id === id)?.stopped;
+        for (const id of c.flowScope(f)) liftStop(c.w.tasks.find((x) => x.id === id));
       }
       if (f.status === 'running') {
         const now = new Set(f.nodes.map((n) => n.taskId));
         const changedSet = a.nodes && (a.nodes.length !== now.size || a.nodes.some((n) => !now.has(n?.taskId)));
+        if (changedSet) {
+          const kept = new Set(a.nodes.map((n) => n?.taskId));
+          for (const id of now) if (!kept.has(id)) c.guardTree(c.task(id), 'flow.update'); // a node with work in progress stays
+        }
         const changedAssignee = a.assignee !== undefined && a.assignee !== null && (a.assignee.trim() || null) !== (f.assignee || null);
         const toDraft = a.status === 'draft';
         const pausedBySomeoneElse = a.status === 'paused' && !c.isHuman;
-        if (changedSet || changedAssignee || toDraft || pausedBySomeoneElse) c.guardFlow(f, 'flow.update');
+        if ((changedSet && !c.isHuman) || changedAssignee || toDraft || pausedBySomeoneElse) c.guardFlow(f, 'flow.update');
       }
       if (a.title) f.title = a.title.trim();
       if (a.nodes) {
@@ -929,7 +991,7 @@ const ACTIONS = [
         if (t.status === 'doing' && t.owner && t.owner !== HUMAN) fail(`run.start: ${t.owner} is doing this task`, 409);
         const ownRun = c.w.runs.some((r) => ACTIVE_RUN.includes(r.status) && r.target.kind === 'task' && r.target.id === t.id);
         if (!ownRun) c.guard(t, 'run.start'); // a second Run on the same task is answered below
-        delete t.stopped;
+        liftStop(t);
         target = { kind: 'task', id: t.id };
         projectId = t.projectId;
         title = t.title;
@@ -937,7 +999,7 @@ const ACTIONS = [
         const fl = c.flow(a.flowId);
         if (!fl.nodes.length) fail('run.start: the flow has no nodes');
         c.guardFlow(fl, 'run.start');
-        for (const id of c.flowScope(fl)) delete c.w.tasks.find((x) => x.id === id)?.stopped;
+        for (const id of c.flowScope(fl)) liftStop(c.w.tasks.find((x) => x.id === id));
         target = { kind: 'flow', id: fl.id };
         projectId = fl.projectId;
         title = fl.title;
@@ -1026,7 +1088,7 @@ const ACTIONS = [
   },
   {
     name: 'work.stop', args: { taskId: S(100), flowId: S(100), reason: S(2000) },
-    description: 'The user stops work in progress so that it can be changed: for a task, its session (a tracker run is ended; a chat session can no longer write to it) and the running flow it is in; for a flow, the flow, its run and its tasks in work. Stopped tasks go back to "todo", marked as stopped by the user; an agent starts them again only on the user\'s word (task.start userSaid) or a new Run.',
+    description: 'The user stops work in progress so that it can be changed: for a task, that task (a chat session can no longer write to it; a tracker run doing it is ended, which also pauses the flow it runs); the rest of its flow goes on. For a flow: the flow, its run and its tasks in work. Stopped tasks go back to "todo", marked as stopped by the user; an agent starts them again only on the user\'s word (task.start userSaid) or a new Run.',
     run: (c, a) => {
       if (!c.isHuman) fail('work.stop: only the user stops work', 403);
       if (!a.taskId && !a.flowId) fail('work.stop: give a taskId or a flowId');
@@ -1069,13 +1131,7 @@ const ACTIONS = [
       }
       if (a.taskId) {
         const t = c.task(a.taskId);
-        for (const lock of c.locksOf(t)) {
-          if (lock.kind === 'flow') {
-            for (const r of c.w.runs) if (r.target.kind === 'flow' && r.target.id === lock.flowId) stopRun(r);
-            stopFlow(c.flow(lock.flowId));
-          }
-          if (lock.kind === 'run') stopRun(c.w.runs.find((r) => r.id === lock.runId));
-        }
+        for (const lock of c.locksOf(t)) if (lock.runId) stopRun(c.w.runs.find((r) => r.id === lock.runId));
         for (const r of c.w.runs) if (ACTIVE_RUN.includes(r.status) && r.actor === t.owner) stopRun(r);
         stopTask(t);
       }

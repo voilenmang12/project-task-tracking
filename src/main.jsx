@@ -275,16 +275,12 @@ function Project({ projectId, taskId, flowRoute, onError }) {
     const r = liveRuns.find((x) => x.actor === t.owner);
     if (r && t.status === 'doing') runOfTask.set(t.id, r);
   }
-  // Work in progress, which only its session changes: tasks in "doing", tasks of active runs, running flows.
+  // Work in progress, which only its session changes: a task in "doing" or with an active run, and what is under it.
+  // The rest of a running flow stays free to change (the server's locksOf is the same rule).
   const locked = new Map();
-  for (const t of tasks) if (t.status === 'doing' && t.owner && t.owner !== 'human') locked.set(t.id, `${actorName(t.owner)} đang làm`);
-  for (const id of runOfTask.keys()) if (!locked.has(id)) locked.set(id, `${runName(runOfTask.get(id).id)} đang chạy`);
-  for (const f of flows) {
-    if (f.status !== 'running' || f.state === 'done') continue;
-    for (const n of f.nodes) {
-      for (const id of [n.taskId, ...descendantIds(tasks, n.taskId)]) if (!locked.has(id)) locked.set(id, `trong luồng "${f.title}" đang chạy`);
-    }
-  }
+  const lockTree = (id, why) => { for (const x of [id, ...descendantIds(tasks, id)]) if (!locked.has(x)) locked.set(x, why); };
+  for (const t of tasks) if (t.status === 'doing' && t.owner && t.owner !== 'human') lockTree(t.id, `${actorName(t.owner)} đang làm`);
+  for (const r of liveRuns) if (r.target.kind === 'task') lockTree(r.target.id, `${runName(r.id)} đang chạy`);
   const match = FILTERS.find((f) => f[0] === filter)[2];
   // An item is shown when it or something below it matches the filter.
   const visible = new Set();

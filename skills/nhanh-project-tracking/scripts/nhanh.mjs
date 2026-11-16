@@ -76,6 +76,17 @@ function taskDetail(t, indent = '    ') {
   for (const c of t.criteria || []) lines.push(`${indent}[${c.done ? 'x' : ' '}] ${c.id} ${c.text}`);
   if (t.blockedReason && t.status === 'blocked') lines.push(`${indent}blocked: ${t.blockedReason}`);
   if (t.question) lines.push(`${indent}question: ${t.question.text}${t.question.answer ? `\n${indent}ANSWER: ${t.question.answer}` : ' (not answered yet)'}`);
+  for (const change of t.changedSinceStop || []) lines.push(`${indent}changed by the user since the stop: ${change}`);
+  if (t.resume) {
+    const r = t.resume;
+    lines.push(`${indent}RESUME: this task was worked on before. Continue it, do not start over:`);
+    lines.push(`${indent}  branch: ${r.branch || '(none recorded)'}: check it out, run git status, keep what is committed, finish or discard what is not`);
+    if (r.stopped) lines.push(`${indent}  stopped by the user at ${r.stopped.at.slice(0, 16).replace('T', ' ')} while ${r.stopped.owner} was on it${r.stopped.reason ? `: ${r.stopped.reason}` : ''}`);
+    for (const x of r.criteriaDone) lines.push(`${indent}  done already: ${x}`);
+    for (const x of r.criteriaOpen) lines.push(`${indent}  still open: ${x}`);
+    for (const x of r.progress) lines.push(`${indent}  progress: ${x}`);
+    for (const x of r.changedSinceStop) lines.push(`${indent}  CHANGED BY THE USER: ${x}  (apply it)`);
+  }
   return lines;
 }
 
@@ -109,7 +120,7 @@ function digestText(d) {
     out.push('', `${head}. YOURS: take its NEXT task first, in this order; when it is done, digest again for the next.`);
     for (const t of f.doing) out.push(`  doing: ${taskLine(t)}`);
     for (const t of f.next) { out.push(`  NEXT: ${taskLine(t)}`); out.push(...taskDetail(t)); }
-    for (const t of f.waiting) out.push(`  then: ${taskLine(t)} — waits for ${t.waitingOn.join(t.afterMode === 'any' ? ' or ' : ', ') || 'review or sub-tasks'}`);
+    for (const t of f.waiting) out.push(`  then: ${taskLine(t)} — waits for ${t.waitingOn.join(t.afterMode === 'any' ? ' or ' : ', ') || (t.stopped ? 'the user (stopped)' : 'review or sub-tasks')}`);
     report();
   }
   section('IN PROGRESS', d.doing, true);

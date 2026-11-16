@@ -65,13 +65,18 @@ Agent không tự chạy một luồng khi bạn chưa đồng ý; lời đồng
 
 ## Việc đang chạy bị khoá
 
-Phần việc một phiên đang làm (việc "đang làm", việc có lượt chạy, mọi thứ trong một luồng đang chạy) chỉ phiên đó sửa
-được. Bạn hay agent khác sửa, chuyển, nối mũi tên, thêm việc con, bỏ, xoá, đánh dấu xong, mở lại việc mà nó đang chờ,
-đổi node, người được giao hay xoá luồng, đổi repo hay lưu trữ dự án khi đang chạy: tracker từ chối (423). Trên UI hiện
-hộp thoại nói cái gì đang chạy, nút **Dừng rồi làm tiếp** dừng nó (`work.stop`) rồi làm lại thao tác. Dừng: luồng tạm
-dừng, lượt chạy bị tắt, việc dở trở về "Chờ làm" với nhãn "bạn đã dừng"; agent không ghi tiếp được vào việc đó, chỉ
-làm lại khi bạn bấm Chạy hoặc bảo nó trong chat. Kéo vị trí node, đổi tên luồng, trả lời câu hỏi, gỡ chặn, duyệt vẫn
-làm được khi đang chạy. Dòng việc đang khoá có biểu tượng 🔒.
+Chỉ **việc đang làm** (hoặc đang có lượt chạy) và những gì bên dưới nó bị khoá: chỉ phiên đang làm sửa được. Bạn hay
+agent khác sửa, chuyển, thêm việc con, bỏ, xoá, đánh dấu xong nó, mở lại việc mà nó đang chờ, hay bớt node chứa nó khỏi
+luồng: tracker từ chối (423). Ở cấp luồng, đổi người chạy, chuyển về nháp, xoá hay chạy lại luồng đang chạy, và đổi repo
+hay lưu trữ dự án khi đang chạy, cũng cần dừng trước. **Phần chưa tới lượt** của luồng đang chạy (sửa, nối mũi tên,
+thêm hay bớt node, việc con) đổi được ngay: điều kiện được kiểm tra lại khi agent bắt đầu từng việc.
+
+Trên UI, hộp thoại nói cái gì đang chạy; **Dừng rồi làm tiếp** dừng nó (`work.stop`) rồi làm lại thao tác. Dừng một
+việc chỉ dừng việc đó (luồng vẫn chạy các việc khác), trừ khi một lượt chạy ngầm đang làm nó: phiên đó tắt và luồng của
+nó tạm dừng. Việc dừng trở về "Chờ làm" với nhãn "bạn đã dừng"; agent không ghi tiếp được vào nó. Khi bạn bảo làm tiếp
+(trong chat, hoặc bấm Chạy), agent **tiếp tục chứ không làm lại**: `task.start` trả về nhánh cũ, tiêu chí đã đạt, tiến
+độ đã ghi và từng thay đổi bạn đã làm từ lúc dừng (Nhật ký ghi rõ trường nào đổi, từ gì sang gì). Dòng việc đang khoá
+có biểu tượng 🔒.
 
 ## Chạy bằng agent
 
