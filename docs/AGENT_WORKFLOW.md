@@ -3,7 +3,8 @@
 The workflow for agents is the skill: [SKILL.md](../skills/nhanh-project-tracking/SKILL.md) (connect, the loop, the
 work loop with the user, which action for which situation, runs started by the tracker) and
 [rules.md](../skills/nhanh-project-tracking/references/rules.md) (what is tracked, the plan and its flow, order
-arrows, work added on the way, reports, several agents, audits). This page is the short version.
+arrows, work added on the way, reports, several agents, audits). This page is the short version. Agents reach the
+tracker through the `nhanh` MCP tools (`digest`, `task_start`, …) or the CLI (`nhanh.mjs`): the same actions.
 
 ## The work loop (instead of plan mode)
 

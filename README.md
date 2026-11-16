@@ -149,6 +149,19 @@ Agent không sửa trường dữ liệu; nó báo việc gì đã xảy ra, tra
 Agent khác không sửa được việc đang do một agent làm (HTTP 409), trừ khi `takeover`; việc đang chạy chỉ phiên đang
 làm sửa được (HTTP 423, kể cả bạn: dừng trước). Chỉ bạn mới xoá, duyệt, chạy và dừng.
 
+**MCP server** (không cần thư viện ngoài): `skills/nhanh-project-tracking/scripts/nhanh-mcp.mjs` phục vụ các hành động
+dành cho agent thành tool MCP (`task.start` → `task_start`, kèm JSON Schema; các hành động chỉ bạn gọi không có).
+Đăng ký một lần cho Claude Code:
+
+```sh
+claude mcp add --scope user nhanh -- node ~/.claude/skills/nhanh-project-tracking/scripts/nhanh-mcp.mjs
+```
+
+Mở trong thư mục game có `project.yaml` (khối `tracker`), server tự lấy actor và dự án từ đó, nên agent không cần
+truyền `projectId`; nơi khác thì thêm `--actor <tên> --project <id>`. Tracker không chạy thì danh sách tool vẫn có
+(từ `actions.json` đi kèm) và mỗi lời gọi báo rõ. Lượt chạy ngầm có server MCP riêng (`nhanh-run`) ghi đúng actor
+`run-<n>`. Sau khi đổi một hành động: `npm run skill:actions` (test báo khi bản chụp đã cũ).
+
 CLI (không cần thư viện ngoài):
 
 ```sh

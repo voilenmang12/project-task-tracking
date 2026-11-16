@@ -16,6 +16,20 @@ the tracker's repository is.
 
 Settings: `PORT` and `NHANH_DATA_DIR` for the server; `NHANH_URL` and `NHANH_ACTOR` for the client.
 
+## MCP server
+
+`scripts/nhanh-mcp.mjs` serves the agent actions as MCP tools over stdio (no dependencies). Register it once:
+
+```sh
+claude mcp add --scope user nhanh -- node <skill folder>/scripts/nhanh-mcp.mjs
+```
+
+Started in a repository whose `project.yaml` has a `tracker` block, it writes as `tracker.actor` and fills
+`projectId` with `tracker.project_id`. Elsewhere, give them: `--actor <name> --project <id>` (or `NHANH_ACTOR`,
+`NHANH_PROJECT`). Without an actor, reads work and writes say how to set one. When the tracker does not answer, the
+tools are still listed (from `scripts/actions.json`) and each call says so. Actions only the user calls (approve,
+delete, run, stop) are not served.
+
 A repository binds itself to a project in its own instructions or config, for example:
 
 ```yaml

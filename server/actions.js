@@ -1157,11 +1157,33 @@ const ACTIONS = [
   },
 ];
 
+/** Who calls an action: an agent, only the user (in the web UI), or only the tracker itself. */
+const AUDIENCE = {
+  'task.approve': 'user', 'flow.approve': 'user', 'task.answer': 'user', 'task.delete': 'user', 'flow.delete': 'user',
+  'run.start': 'user', 'run.stop': 'user', 'work.stop': 'user', 'run.report': 'tracker',
+};
+
+/** JSON Schema of one argument rule. "any" (criterion references) takes ids, 1-based numbers, texts or "all". */
+function argSchema(rule) {
+  if (rule.type === 'string') return { type: 'string', ...(rule.max ? { maxLength: rule.max } : {}) };
+  if (rule.type === 'array') return { type: 'array' };
+  if (rule.type === 'object') return { type: 'object' };
+  if (rule.type === 'any') return {};
+  return { type: rule.type };
+}
+
 export const definitions = ACTIONS.map(({ name, description, args, read }) => ({
   name,
   description,
   readOnly: Boolean(read),
+  audience: AUDIENCE[name] || 'agent',
   arguments: Object.fromEntries(Object.entries(args).map(([k, r]) => [k, `${r.type}${r.required ? ' (required)' : ''}`])),
+  schema: {
+    type: 'object',
+    properties: Object.fromEntries(Object.entries(args).map(([k, r]) => [k, argSchema(r)])),
+    required: Object.entries(args).filter(([, r]) => r.required).map(([k]) => k),
+    additionalProperties: false,
+  },
 }));
 
 /**

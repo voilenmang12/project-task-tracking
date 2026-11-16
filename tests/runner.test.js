@@ -46,6 +46,7 @@ test('a run starts the CLI in the repository, keeps a readable log and records t
     assert.match(log, /💬 Actor run-1; task/);
     assert.match(log, /→ Bash: git checkout -b task\/x/);
     assert.match(log, /allowed=Bash\(node [^)]*nhanh\.mjs"?:\*\); prompt uses it: true/, 'only the tracker CLI is pre-approved, and the prompt names it');
+    assert.match(log, /mcp tools allowed: true; mcp actor run-1 project g; prompt names them: true/, 'the run talks to the tracker through its own MCP server');
     assert.match(log, /■ Kết thúc \(success, 3 lượt · \$0\.12\)/);
     assert.equal(s.runner.readLog('../x').text, '', 'only run logs are served');
     assert.doesNotMatch(log, /LEAKED/, 'a host Claude Code session does not leak into the run');
