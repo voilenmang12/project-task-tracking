@@ -22,16 +22,19 @@ const parseRoute = () => {
   const parts = window.location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   if (parts[0] === 'inbox') return { view: 'inbox' };
   if (parts[0] === 'runs') return { view: 'runs' };
-  if (parts[0] === 'p' && parts[1]) return { view: 'project', projectId: parts[1], taskId: parts[2] === 't' ? parts[3] : null };
+  if (parts[0] === 'p' && parts[1]) {
+    return { view: 'project', projectId: parts[1], taskId: parts[2] === 't' ? parts[3] : null, flowId: parts[2] === 'f' ? parts[3] : null };
+  }
   return { view: 'home' };
 };
 const go = (path) => { window.location.hash = path; };
+const flowPath = (id, flowId) => `/p/${encodeURIComponent(id)}/f/${encodeURIComponent(flowId)}`;
 const projectPath = (id, taskId) => `/p/${encodeURIComponent(id)}${taskId ? `/t/${encodeURIComponent(taskId)}` : ''}`;
 
 function App() {
   const [route, setRoute] = React.useState(parseRoute);
   const [projects, setProjects] = React.useState(null);
-  const [attention, setAttention] = React.useState({ questions: [], blocked: [], pending: [], review: [] });
+  const [attention, setAttention] = React.useState({ questions: [], blocked: [], pending: [], review: [], flows: [] });
   const [online, setOnline] = React.useState(true);
   const [error, setError] = React.useState('');
   const onError = React.useCallback((e) => { setError(e.message); setTimeout(() => setError(''), 6000); }, []);
@@ -48,9 +51,9 @@ function App() {
   }, setOnline), [onError]);
 
   const reviewRoots = pendingRoots(attention.review || []);
-  const needsYou = attention.questions.length + attention.blocked.length + reviewRoots.length;
+  const needsYou = attention.questions.length + attention.blocked.length + reviewRoots.length + (attention.flows || []).length;
   const active = (projects || []).filter((p) => !p.archived);
-  const running = active.reduce((n, p) => n + (p.summary.running || 0), 0);
+  const running = active.reduce((n, p) => n + (p.summary.running || 0) + (p.summary.sessions || 0), 0);
 
   const newProject = async () => {
     const title = await askText({ title: 'Dự án mới', label: 'Tên dự án', placeholder: 'CG03 Tên game', required: true, confirmLabel: 'Tạo' });
@@ -86,7 +89,7 @@ function App() {
         {projects === null ? <p className="muted pad">Đang tải…</p>
           : route.view === 'runs' ? <RunsPage onError={onError} projectHref={(id, taskId) => `#${projectPath(id, taskId)}`} />
           : route.view === 'inbox' ? <Inbox attention={attention} reviewRoots={reviewRoots} onError={onError} />
-          : route.view === 'project' ? <Project key={route.projectId} projectId={route.projectId} taskId={route.taskId} onError={onError} />
+          : route.view === 'project' ? <Project key={route.projectId} projectId={route.projectId} taskId={route.taskId} flowRoute={route.flowId} onError={onError} />
           : <Home projects={active} onNew={newProject} />}
       </main>
       <RunLogHost onError={onError} />
@@ -142,13 +145,13 @@ function Home({ projects, onNew }) {
 
 // ---- Cần bạn ---------------------------------------------------------------------------------------------------
 function Inbox({ attention, reviewRoots, onError }) {
-  const { questions, blocked, pending, review = [] } = attention;
+  const { questions, blocked, pending, review = [], flows = [] } = attention;
   const TaskLink = ({ t }) => <a className="link" href={`#${projectPath(t.projectId, t.id)}`}>{t.title}</a>;
   const unblock = async (t) => {
     const note = await askText({ title: 'Gỡ chặn', label: 'Đã gỡ chặn bằng cách nào? (agent sẽ đọc)', confirmLabel: 'Gỡ chặn' });
     if (note !== null) call('task.unblock', { taskId: t.id, note: note || undefined }).catch(onError);
   };
-  const nothing = !questions.length && !blocked.length && !reviewRoots.length;
+  const nothing = !questions.length && !blocked.length && !reviewRoots.length && !flows.length;
   return (
     <div className="pad narrow">
       <h1>Cần bạn</h1>
@@ -159,6 +162,19 @@ function Inbox({ attention, reviewRoots, onError }) {
         <div key={t.id} className="inbox-item">
           <div className="inbox-where"><span className="muted">{t.projectTitle} ·</span> <TaskLink t={t} /></div>
           <QuestionBox task={t} onError={onError} />
+        </div>
+      ))}
+
+      {flows.length > 0 && <h3>Luồng agent đề xuất, chờ bạn duyệt</h3>}
+      {flows.map((f) => (
+        <div key={f.id} className="inbox-item review-item">
+          <div className="grow">
+            <div><span className="muted">{f.projectTitle} ·</span> <a className="link" href={`#${flowPath(f.projectId, f.id)}`}>Luồng "{f.title}"</a>
+              <span className="muted"> · {f.total} việc</span></div>
+            <div className="muted small">Mở luồng để xem thứ tự, sửa nếu cần, rồi Duyệt, Chạy, hoặc nói "ok chạy đi" với agent trong chat.</div>
+          </div>
+          <a className="btn" href={`#${flowPath(f.projectId, f.id)}`}>Xem luồng</a>
+          <button className="btn btn-approve" onClick={() => call('flow.approve', { flowId: f.id }).catch(onError)}><Check size={14} /> Duyệt</button>
         </div>
       ))}
 
@@ -223,15 +239,16 @@ function dropTarget(tasks, draggedId, target, zone) {
   return { parentId, index: zone === 'after' ? at + 1 : at };
 }
 
-function Project({ projectId, taskId, onError }) {
+function Project({ projectId, taskId, flowRoute, onError }) {
   const [data, setData] = React.useState(null);
-  const [tab, setTab] = React.useState('plan');
+  const [tab, setTab] = React.useState(flowRoute ? 'flow' : 'plan');
   const [filter, setFilter] = React.useState('all');
   const [closed, setClosed] = React.useState(() => new Set());
   const [preset, setPreset] = React.useState(null);
   const [drag, setDrag] = React.useState(null);
   const [drop, setDrop] = React.useState(null);
-  const [flowId, setFlowId] = React.useState(null);
+  const [flowId, setFlowId] = React.useState(flowRoute || null);
+  React.useEffect(() => { if (flowRoute) { setTab('flow'); setFlowId(flowRoute); } }, [flowRoute]);
   // Luồng tab: the tree on the left, the board on the right; the user drags the divider, the width is remembered.
   const [split, setSplit] = React.useState(() => Number(localStorage.getItem('nhanh-split')) || 0.42);
   const splitBox = React.useRef(null);
@@ -244,6 +261,9 @@ function Project({ projectId, taskId, onError }) {
   const { project: p, summary: s, tasks, events, flows = [], runs = [] } = data;
   // The live run behind each task: the one started for it, or a flow run whose session is doing it now.
   const liveRuns = runs.filter((r) => ACTIVE.includes(r.status));
+  // Chat sessions (agents the user runs in Claude Code) holding work now: owners of tasks in work.
+  const sessions = [...new Set(tasks.filter((t) => t.status === 'doing' && t.owner && t.owner !== 'human' && !/^run-\d+$/.test(t.owner)).map((t) => t.owner))]
+    .map((actor) => ({ actor, doing: tasks.filter((t) => t.status === 'doing' && t.owner === actor) }));
   const runOfTask = new Map();
   for (const r of liveRuns) if (r.target.kind === 'task') runOfTask.set(r.target.id, r);
   for (const t of tasks) {
@@ -337,9 +357,10 @@ function Project({ projectId, taskId, onError }) {
               Duyệt trước việc agent thêm
             </label>
           </div>
-          {liveRuns.length > 0 && (
+          {(liveRuns.length > 0 || sessions.length > 0) && (
             <div className="runs-now">
               {liveRuns.map((r) => <RunLine key={r.id} run={r} onError={onError} />)}
+              {sessions.map((x) => <SessionLine key={x.actor} session={x} onOpenTask={openTask} />)}
             </div>
           )}
           <div className="tabs" role="tablist">
@@ -400,6 +421,20 @@ function Project({ projectId, taskId, onError }) {
         {tab === 'notes' && <Notes project={p} onError={onError} />}
       </div>
       {taskId && <TaskPanel taskId={taskId} tasks={tasks} runs={runs} onClose={closeTask} onError={onError} onOpenTask={openTask} />}
+    </div>
+  );
+}
+
+/** A chat session in Claude Code working on this project now (it is not started or stopped from here). */
+function SessionLine({ session, onOpenTask }) {
+  return (
+    <div className="run-line run-active">
+      <span className="chip run-chip run-running"><span className="pulse" />Phiên chat</span>
+      <strong>{session.actor}</strong>
+      <span className="grow ellipsis">
+        {session.doing.map((t, i) => <React.Fragment key={t.id}>{i > 0 && ', '}<button className="link" onClick={() => onOpenTask(t.id)}>{t.title}</button></React.Fragment>)}
+      </span>
+      <span className="muted small">trong Claude Code</span>
     </div>
   );
 }

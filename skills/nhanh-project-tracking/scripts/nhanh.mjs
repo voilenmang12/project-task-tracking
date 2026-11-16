@@ -90,13 +90,26 @@ function digestText(d) {
   for (const f of d.flows || []) {
     const owner = f.assignee ? `for ${f.assignee}` : 'for any agent';
     const head = `FLOW ${f.id} "${f.title}" — ${f.status}, ${owner}, ${f.done}/${f.total} done`;
+    const report = () => {
+      if (!f.lastReport) return;
+      out.push(`  last report (${f.lastReport.at.slice(0, 16).replace('T', ' ')}, ${f.lastReport.by}):`);
+      for (const line of f.lastReport.text.split('\n').slice(0, 12)) out.push(`    ${line}`);
+    };
+    if (f.status === 'draft') {
+      out.push('', f.review === 'pending'
+        ? `${head} (PROPOSED: waits for the user's OK; do not start its tasks. When the user says to run it in chat: flow.update flowId=${f.id} status=running userSaid="<their words>")`
+        : `${head} (approved, not running: the user starts it with Run, or tells you in chat: flow.update flowId=${f.id} status=running userSaid="<their words>")`);
+      report();
+      continue;
+    }
+    if (f.status === 'done') { out.push('', `${head} (finished)`); report(); continue; }
     if (!f.mine) { out.push('', `${head} (not yours: leave its tasks alone)`); continue; }
-    if (f.status === 'paused') { out.push('', `${head} (paused by the user: do not take its tasks)`); continue; }
-    if (f.status === 'done') { out.push('', `${head} (finished)`); continue; }
+    if (f.status === 'paused') { out.push('', `${head} (paused: do not take its tasks)`); report(); continue; }
     out.push('', `${head}. YOURS: take its NEXT task first, in this order; when it is done, digest again for the next.`);
     for (const t of f.doing) out.push(`  doing: ${taskLine(t)}`);
     for (const t of f.next) { out.push(`  NEXT: ${taskLine(t)}`); out.push(...taskDetail(t)); }
     for (const t of f.waiting) out.push(`  then: ${taskLine(t)} — waits for ${t.waitingOn.join(t.afterMode === 'any' ? ' or ' : ', ') || 'review or sub-tasks'}`);
+    report();
   }
   section('IN PROGRESS', d.doing, true);
   section('BLOCKED', d.blocked, true);
@@ -159,7 +172,10 @@ async function main() {
   if (cmd.action === 'digest') return console.log(digestText(result));
   if (cmd.action === 'tree') return console.log(treeText(result));
   if (name === 'projects.list') return console.log(listText(result));
-  if (name === 'plan.apply') return console.log(`created ${result.created.length}, updated ${result.updated.length}${result.created.length ? `\n${result.created.join('\n')}` : ''}`);
+  if (name === 'plan.apply') {
+    const flow = result.flow ? `\nflow ${result.flow}: proposed, waits for the user's OK (web UI, or their words in chat)` : '';
+    return console.log(`created ${result.created.length}, updated ${result.updated.length}${result.created.length ? `\n${result.created.join('\n')}` : ''}${flow}`);
+  }
   if (name.startsWith('task.') && result?.id) return console.log([taskLine(result), ...taskDetail(result, '  ')].join('\n'));
   return console.log(JSON.stringify(result, null, 2));
 }

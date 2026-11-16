@@ -137,7 +137,11 @@ export function RunLogHost({ onError }) {
 /** "Đang chạy": every run of every project, active ones first. */
 export function RunsPage({ onError, projectHref }) {
   const [runs, setRuns] = React.useState(null);
-  const load = React.useCallback(() => call('runs.list', { limit: 100 }).then(setRuns).catch(onError), [onError]);
+  const [sessions, setSessions] = React.useState([]);
+  const load = React.useCallback(() => {
+    call('runs.list', { limit: 100 }).then(setRuns).catch(onError);
+    call('activity').then(setSessions).catch(onError);
+  }, [onError]);
   React.useEffect(() => { load(); window.addEventListener('nhanh-change', load); return () => window.removeEventListener('nhanh-change', load); }, [load]);
   if (!runs) return <p className="muted pad">Đang tải…</p>;
   const active = runs.filter((r) => ACTIVE.includes(r.status)).reverse();
@@ -146,8 +150,21 @@ export function RunsPage({ onError, projectHref }) {
   return (
     <div className="pad narrow">
       <h1>Đang chạy</h1>
-      <p className="muted">Mỗi lượt chạy là một phiên Claude Code tracker mở trong repo của dự án, cho một việc hoặc một luồng. Mỗi repo chạy một lượt một lúc; lượt sau chờ.</p>
-      <h3>Đang chạy và chờ lượt</h3>
+      <p className="muted">Phiên chat là agent bạn đang trò chuyện trong Claude Code. Lượt chạy là phiên tracker tự mở khi bạn bấm Chạy; mỗi repo chạy một lượt một lúc, lượt sau chờ.</p>
+      {sessions.length > 0 && <h3>Phiên chat đang làm (Claude Code)</h3>}
+      {sessions.map((x) => (
+        <div key={`${x.projectId}:${x.actor}`} className="run-line run-active">
+          <span className="chip run-chip run-running"><span className="pulse" />Phiên chat</span>
+          <strong>{x.actor}</strong>
+          <span className="grow ellipsis">
+            <span className="muted">{x.projectTitle} · </span>
+            {x.flows.map((f) => <span key={f.id}>luồng "{f.title}" · </span>)}
+            {x.doing.map((t, i) => <React.Fragment key={t.id}>{i > 0 && ', '}<a className="link" href={projectHref(x.projectId, t.id)}>{t.title}</a>{t.status === 'blocked' ? ' (bị chặn)' : ''}</React.Fragment>)}
+          </span>
+          <span className="muted small">{x.lastAt ? timeAgo(x.lastAt) : ''}</span>
+        </div>
+      ))}
+      <h3>Lượt chạy do tracker mở</h3>
       {active.length ? active.map((r) => <RunLine key={r.id} run={r} onError={onError} showProject href={hrefOf(r)} />)
         : <p className="muted">Không có lượt nào đang chạy. Bấm ▶ trên một việc, hoặc "Chạy bằng agent" trên một luồng.</p>}
       {ended.length > 0 && <h3>Gần đây</h3>}

@@ -1,8 +1,8 @@
 ---
 name: nhanh-project-tracking
-description: Records a project's plan, progress and proof in the Nhanh local tracker, where the user follows the work of autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
+description: Plans, runs and reports a project's work through the Nhanh local tracker, where the user reviews plans as flows and follows autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), when the user asks to plan work (instead of plan mode), when they say to run a plan, at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.3.0"
+  version: "2.4.0"
 ---
 
 # Nhánh project tracking
@@ -48,11 +48,41 @@ start a second server and never write its data files.
 Which tasks are tracked, how to write a plan, how to add work found on the way and what a report must contain:
 [rules.md](references/rules.md). Read it before `plan.apply`, `task.add` and your first `task.done`.
 
+## The work loop with the user
+
+This replaces plan mode: the plan lives in the tracker, where the user reviews it as a flow, and the same session
+runs it once they say so.
+
+1. **Plan in chat.** When the user asks to plan, or asks for work of size M or L: read the digest and the
+   repository, agree on the scope in chat, then write the plan to the tracker, not only into the conversation:
+   one `plan.apply` with sized tasks, checkable criteria, `after` arrows for the real order, and
+   `flow: {id, title}` (rules.md, "Set up the plan"). End the turn there: say how many tasks the flow has, what you
+   left coarse, and that the user can review it on the Luồng tab, then say "run it" here or press Run. Start no task.
+2. **The user reviews.** They may edit, reorder, drop, re-link or approve in the web UI. Read the digest again
+   before doing anything with the plan: it is theirs now.
+3. **Go.** When the user tells you in chat to run it (any clear yes: "ok chạy đi", "run it"):
+   `flow.update flowId=<id> status=running userSaid="<their exact words>"`. That approves the flow and gives it to
+   you. Then work it in this session. If they pressed Run in the web UI instead, a tracker run does the work:
+   leave its tasks alone.
+4. **Run, task by task.** Take the flow's `NEXT` task: branch, `task.start`, split an L task into sub-tasks
+   (`task.add`, reason "Split of <id>") and delegate pieces to subagents, `task.progress` per finished step,
+   `task.done` with evidence, merge by the repository's rules, then digest again for the next one. A decision that
+   is the user's: `task.ask` with your default and go on. A hard stop: `task.block`, then the next ready task.
+5. **Report.** When the flow is finished, or you stop (blocked everywhere, out of session): `flow.report` in
+   Markdown, then the same in your closing message: what is now true, one line per task with its proof, what is
+   blocked or waits for the user, the branches and commits, and the next steps you propose.
+6. **Next round.** The next planning starts from the digest, which shows each flow's last report. Extend the plan
+   with `plan.apply` (same ids, new children) and propose the next flow.
+
 ## What each situation calls
 
 | Situation | Action |
 |---|---|
 | The project has no plan | `plan.apply` with groups (milestones) and sized tasks with criteria; on a project with review on it waits for the user's approval, so say in your closing message that the plan is ready to review |
+| The user asks you to plan some work | The work loop, step 1: `plan.apply` with `after` arrows and `flow`; stop and let them review |
+| The user says to run a flow, in chat | `flow.update status=running userSaid="<their words>"`, then its `NEXT` tasks in this session |
+| A flow is `PROPOSED` or approved but not running | Do not start its tasks, even if they look ready |
+| A flow's work ends or stops | `flow.report` with the overall report, and the same in your closing message |
 | A flow is yours and running | Its `NEXT` tasks in the order shown, one after the other; never one marked `then` (it waits for others). A flow marked "not yours" or "paused": leave its tasks alone |
 | Everything left is awaiting review | Stop and say so in your closing message; do not start proposals, do not approve them (only the user does) |
 | A milestone is reached and the next one needs detail | `plan.apply` again with the same ids plus the new children |
