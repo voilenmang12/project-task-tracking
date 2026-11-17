@@ -78,7 +78,10 @@ export function RunLogHost({ onError }) {
   }, []);
   React.useEffect(() => {
     if (!runId) return undefined;
+    // The log grows only while the run is active: read it every 1.5 s until the run ends (or a read fails), then stop.
     let stopped = false;
+    let timer = null;
+    const end = () => { if (timer) clearInterval(timer); timer = null; };
     const refresh = async () => {
       try {
         const runs = await call('runs.list', { limit: 300 });
@@ -89,13 +92,15 @@ export function RunLogHost({ onError }) {
         if (chunk.size < size.current) { size.current = 0; setText(''); return; }
         size.current = chunk.size;
         if (chunk.text) setText((old) => old + chunk.text);
+        if (!r || !ACTIVE.includes(r.status)) end();
       } catch (e) {
+        end();
         if (!stopped) onError(e);
       }
     };
     refresh();
-    const timer = setInterval(refresh, 1500);
-    return () => { stopped = true; clearInterval(timer); };
+    timer = setInterval(refresh, 1500);
+    return () => { stopped = true; end(); };
   }, [runId, onError]);
   React.useEffect(() => {
     if (stick.current && body.current) body.current.scrollTop = body.current.scrollHeight;

@@ -390,7 +390,40 @@ test('the work loop: an agent proposes a plan as a flow, runs it when the user s
   const d = run('digest', { projectId: 'g' }).flows.find((x) => x.id === 'shop-flow');
   assert.match(d.lastReport.text, /Next: prices/);
   assert.equal(w.events.at(-1).type, 'report');
+
+  // Closing a task says what comes next, so the agent does not read the digest again.
+  const doneUi = run('task.done', { taskId: 'shop-ui', summary: 'Screen opens', evidence: { commit: 'abc' } });
+  assert.deepEqual(doneUi.then.flows.map((x) => [x.id, x.next.map((t) => t.id), x.waiting]), [['shop-flow', ['shop-data'], 1]]);
+  assert.equal(doneUi.then.inbox, 0);
+  run('task.add', { projectId: 'g', title: 'Prices in gold' }, USER);
+  run('task.start', { taskId: 'shop-data' });
+  const doneData = run('task.done', { taskId: 'shop-data', summary: 'Data loads' });
+  assert.deepEqual(doneData.then.flows[0].next.map((t) => t.id), ['shop-buy'], 'the arrow is met');
+  assert.equal(doneData.then.inbox, 1, 'the user wrote something new: worth a digest');
   validateWorkspace(w);
+});
+
+test('the text an agent reads is short: details once, compact results, THEN after closing', async () => {
+  const { resultText } = await import('../skills/nhanh-project-tracking/scripts/text.mjs');
+  const { w, run } = workspace();
+  run('task.add', { projectId: 'g', id: 'ask-me', title: 'Music', size: 'M', criteria: ['Licensed'] }, USER);
+  run('task.ask', { taskId: 'ask-me', question: 'Which music?' }, AGENT);
+  run('task.answer', { taskId: 'ask-me', answer: 'CC0' }, USER);
+  const digest = resultText('digest', run('digest', { projectId: 'g' }));
+  assert.equal(digest.split('Licensed').length - 1, 1, 'a task in two sections prints its details once');
+  assert.match(digest, /\(details above\)/);
+
+  run('flow.create', { projectId: 'g', id: 'f', title: 'Core' });
+  const flowText = resultText('flow.update', run('flow.update', { flowId: 'f', nodes: [{ taskId: 'move', x: 0, y: 0 }] }));
+  assert.equal(flowText, 'flow f "Core" — draft, for any agent, 1 tasks, proposed: waits for the user\'s OK');
+
+  run('task.start', { taskId: 'move' });
+  const progress = resultText('task.progress', run('task.progress', { taskId: 'move', check: ['c1'] }));
+  assert.deepEqual(progress.split('\n').slice(1), ['  [ ] c2 Collision test passes'], 'a progress echo lists only what is open');
+  const done = resultText('task.done', run('task.done', { taskId: 'move', summary: 'Moves', check: 'all', evidence: { tests: 'ok' } }));
+  assert.match(done, /THEN:\n {2}no running flow of yours/);
+  assert.match(done, /INBOX: 1 item\(s\) from the user/);
+  assert.ok(w);
 });
 
 test('the user approves a flow in the UI; an agent changing an idle flow proposes it again; a run reports for a silent session', () => {

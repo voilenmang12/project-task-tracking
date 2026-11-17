@@ -307,6 +307,26 @@ function flowView(w, f, actor) {
   };
 }
 
+/**
+ * What an agent does after closing, blocking or releasing a task, so it need not read the whole digest again: the next
+ * tasks of the running flows it owns, and how many items the user wrote that no agent has picked up (when there are
+ * any, a digest is worth reading).
+ */
+function whatNext(c, t) {
+  const byId = new Map(c.w.tasks.map((x) => [x.id, x]));
+  const line = (id) => {
+    const x = byId.get(id);
+    return { id: x.id, title: x.title, size: x.size, status: x.status, criteria: x.criteria, origin: x.origin, owner: x.owner, branch: x.branch };
+  };
+  const flows = c.w.flows
+    .filter((f) => f.projectId === t.projectId && f.status === 'running')
+    .map((f) => ({ f, v: flowView(c.w, f, c.actor) }))
+    .filter(({ v }) => v.mine && v.state === 'running')
+    .map(({ f, v }) => ({ id: f.id, title: f.title, done: v.done, total: v.total, next: v.next.map(line), waiting: v.waiting.length }));
+  const inbox = c.w.tasks.filter((x) => x.projectId === t.projectId && x.kind === 'task' && needsAgent(x)).length;
+  return { flows, inbox };
+}
+
 // ---- the actions -----------------------------------------------------------------------------------------------
 const ACTIONS = [
   {
@@ -333,7 +353,7 @@ const ACTIONS = [
   },
   {
     name: 'digest', read: true, args: { projectId: req(S(100)) },
-    description: 'What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user\'s OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox).',
+    description: 'What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user\'s OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox). Read it when a session or a turn starts, not after each task: task.done, task.block and task.release say what comes next.',
     run: ({ w, project, actor }, a) => {
       const p = project(a.projectId);
       const tasks = w.tasks.filter((t) => t.projectId === p.id && t.kind === 'task');
@@ -721,7 +741,7 @@ const ACTIONS = [
       t.blockedReason = a.reason.trim();
       t.updatedAt = c.now;
       c.log('blocked', t.projectId, t.id, t.blockedReason);
-      return t;
+      return { ...t, then: whatNext(c, t) };
     },
   },
   {
@@ -792,7 +812,7 @@ const ACTIONS = [
   {
     name: 'task.done',
     args: { taskId: req(S(100)), summary: req(S(4000)), evidence: OBJ, check: ANY, unmet: S(2000) },
-    description: 'Close a task with proof. summary = what is now true for the player or the project. evidence = {commit, tests, report, screenshots, notes}: at least one for an M or L task. check = criteria met now (ids, numbers, texts). A criterion still unticked refuses the call unless "unmet" explains why it is closed without it. Sub-tasks must be done or dropped first.',
+    description: 'Close a task with proof. summary = what is now true for the player or the project. evidence = {commit, tests, report, screenshots, notes}: at least one for an M or L task. check = criteria met now (ids, numbers, texts). A criterion still unticked refuses the call unless "unmet" explains why it is closed without it. Sub-tasks must be done or dropped first. The result says what comes next: the next task of each running flow that is yours, and whether the user wrote something new (then read the digest).',
     run: (c, a) => {
       const t = c.task(a.taskId);
       c.mine(t, 'task.done');
@@ -825,7 +845,7 @@ const ACTIONS = [
       t.ack = true;
       t.updatedAt = c.now;
       c.log('done', t.projectId, t.id, t.summary, { evidence: t.evidence, ...(t.unmet ? { unmet: t.unmet } : {}) });
-      return t;
+      return { ...t, then: whatNext(c, t) };
     },
   },
   {
@@ -874,7 +894,7 @@ const ACTIONS = [
       t.owner = null;
       t.updatedAt = c.now;
       c.log('released', t.projectId, t.id, a.note?.trim() || 'Released');
-      return t;
+      return { ...t, then: whatNext(c, t) };
     },
   },
   {

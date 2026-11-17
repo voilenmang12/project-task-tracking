@@ -34,10 +34,16 @@ export function taskDetail(t, indent = '    ') {
 export function digestText(d) {
   const out = [`${d.project.title} (${d.project.id}) · stage ${d.project.stage} · ${pct(d.summary.progress)} · ${counts(d.summary.counts)}`];
   if (!d.planned) out.push('', 'NO PLAN YET: set it up with plan.apply (see the skill, "Set up the plan").');
+  const shown = new Set(); // a task's details are printed once; later sections name it in one line
+  const detailOnce = (t) => {
+    if (shown.has(t.id)) return ['    (details above)'];
+    shown.add(t.id);
+    return taskDetail(t);
+  };
   const section = (title, list, detail) => {
     if (!list.length) return;
     out.push('', `${title}:`);
-    for (const t of list) { out.push(`  ${taskLine(t)}`); if (detail) out.push(...taskDetail(t)); }
+    for (const t of list) { out.push(`  ${taskLine(t)}`); if (detail) out.push(...detailOnce(t)); }
   };
   section('INBOX — the user wrote this, no agent has picked it up (task.ack or task.start each)', d.inbox, true);
   for (const f of d.flows || []) {
@@ -58,9 +64,9 @@ export function digestText(d) {
     if (f.status === 'done') { out.push('', `${head} (finished)`); report(); continue; }
     if (!f.mine) { out.push('', `${head} (not yours: leave its tasks alone)`); continue; }
     if (f.status === 'paused') { out.push('', `${head} (paused: do not take its tasks)`); report(); continue; }
-    out.push('', `${head}. YOURS: take its NEXT task first, in this order; when it is done, digest again for the next.`);
+    out.push('', `${head}. YOURS: take its NEXT task first, in this order; task.done then names the next one.`);
     for (const t of f.doing) out.push(`  doing: ${taskLine(t)}`);
-    for (const t of f.next) { out.push(`  NEXT: ${taskLine(t)}`); out.push(...taskDetail(t)); }
+    for (const t of f.next) { out.push(`  NEXT: ${taskLine(t)}`); out.push(...detailOnce(t)); }
     for (const t of f.waiting) out.push(`  then: ${taskLine(t)} — waits for ${t.waitingOn.join(t.afterMode === 'any' ? ' or ' : ', ') || (t.stopped ? 'the user (stopped)' : 'review or sub-tasks')}`);
     report();
   }
@@ -108,6 +114,40 @@ export function resultText(name, result) {
     if (result.flow) lines.push(`flow ${result.flow}: proposed, waits for the user's OK (web UI, or their words in chat)`);
     return lines.join('\n');
   }
-  if (name.startsWith('task.') && result?.id) return [taskLine(result), ...taskDetail(result, '  ')].join('\n');
-  return JSON.stringify(result, null, 2);
+  if (name === 'task.get' || name === 'task.start') {
+    return [taskLine(result), ...taskDetail(result, '  ')].join('\n');
+  }
+  if (name.startsWith('task.') && result?.id) {
+    // The agent wrote this change itself: echo the state, not the whole task again.
+    const open = (result.criteria || []).filter((c) => !c.done).map((c) => `  [ ] ${c.id} ${c.text}`);
+    return [taskLine(result), ...open, ...thenText(result.then)].join('\n');
+  }
+  if (name.startsWith('flow.') && result?.nodes) return flowLine(result);
+  return JSON.stringify(result);
+}
+
+function flowLine(f) {
+  const owner = f.assignee ? `for ${f.assignee}` : 'for any agent';
+  const review = f.review === 'pending' ? ', proposed: waits for the user\'s OK' : '';
+  return `flow ${f.id} "${f.title}" — ${f.status}, ${owner}, ${f.nodes.length} tasks${review}`;
+}
+
+/** After task.done, task.block or task.release: what comes next, so the agent does not read the digest again. */
+function thenText(then) {
+  if (!then) return [];
+  const out = ['', 'THEN:'];
+  for (const f of then.flows) {
+    out.push(`  FLOW ${f.id} "${f.title}" ${f.done}/${f.total} done (yours):`);
+    for (const t of f.next) out.push(`    NEXT: ${taskLine(t)}  (task.start it; task.start prints its details)`);
+    if (!f.next.length) {
+      out.push(f.waiting
+        ? `    nothing ready: ${f.waiting} task(s) wait for others or for the user; end with flow.report if you stop here`
+        : '    no task left: write the overall report with flow.report');
+    }
+  }
+  if (!then.flows.length) out.push('  no running flow of yours: go on with the work the user agreed in chat, or end the turn with your report');
+  out.push(then.inbox
+    ? `  INBOX: ${then.inbox} item(s) from the user not picked up yet: read the digest before the next task`
+    : '  inbox empty: no need to read the digest again');
+  return out;
 }
