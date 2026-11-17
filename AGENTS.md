@@ -18,3 +18,17 @@ autonomous agents (plan, progress, proof, what waits for the user).
   flow in its own chat session only with the user's words (`flow.update userSaid`), which the journal keeps. Its wording is Vietnamese; code, comments
   and the skill are English.
 - Agents using the tracker for another project follow the skill, not this file.
+
+## Project boundary
+
+This repository may sit in a workspace next to other projects (games, other tools) under a parent project.
+
+- A session working on this repository changes only this repository. Sibling projects and the parent are
+  read-only: read them for reference, never edit, delete, commit, pull, update or restart anything there, however
+  small the fix.
+- When another project must change for this one, write `requests/REQ-<NNN>-<slug>.md` here (target project,
+  problem, proposal, evidence with the paths read, `- Status: open`), commit it and tell the user. The target's
+  own session, or the parent's, makes the change.
+- A session started in another project uses this tool only through the API and the CLI, with its own project id.
+  It never edits this repository, its `.local/` data or its running server; it asks for a change with a request
+  in its own repository.
