@@ -40,7 +40,7 @@
   },
   {
     "name": "digest",
-    "description": "What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user's OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox).",
+    "description": "What an agent reads when a session starts: work in progress, the flows (proposed ones wait for the user's OK; running ones given to you: take their next task first; the last report of each), the next tasks, what is blocked, open questions, and what the user wrote that no agent has picked up yet (inbox). Read it when a session or a turn starts, not after each task: task.done, task.block and task.release say what comes next.",
     "readOnly": true,
     "audience": "agent",
     "arguments": {
@@ -672,7 +672,7 @@
   },
   {
     "name": "task.done",
-    "description": "Close a task with proof. summary = what is now true for the player or the project. evidence = {commit, tests, report, screenshots, notes}: at least one for an M or L task. check = criteria met now (ids, numbers, texts). A criterion still unticked refuses the call unless \"unmet\" explains why it is closed without it. Sub-tasks must be done or dropped first.",
+    "description": "Close a task with proof. summary = what is now true for the player or the project. evidence = {commit, tests, report, screenshots, notes}: at least one for an M or L task. check = criteria met now (ids, numbers, texts). A criterion still unticked refuses the call unless \"unmet\" explains why it is closed without it. Sub-tasks must be done or dropped first. The result says what comes next: the next task of each running flow that is yours, and whether the user wrote something new (then read the digest).",
     "readOnly": false,
     "audience": "agent",
     "arguments": {

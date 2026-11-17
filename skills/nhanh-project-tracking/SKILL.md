@@ -2,7 +2,7 @@
 name: nhanh-project-tracking
 description: Plans, runs and reports a project's work through the Nhanh local tracker, where the user reviews plans as flows and follows autonomous agents. Use when the repository names a tracker project (a projectId in its instructions or config), when the user asks to plan work (instead of plan mode), when they say to run a plan, at the start and end of each task of size M or L, when work is discovered, blocked or needs a decision from the user, and when asked to set up or audit a project's plan.
 metadata:
-  version: "2.7.0"
+  version: "2.8.0"
 ---
 
 # Nhánh project tracking
@@ -39,7 +39,7 @@ Two ways in, the same actions:
 1. **Start of a session: `nhanh digest <projectId>`.** It prints, in order: the inbox (what the user wrote that
    no agent has picked up: new requests, answers to questions, unblocks), the tasks in progress, the blocked ones,
    the **flows** the user gave you to run in order (`FLOW … YOURS`: take its `NEXT` task before anything else
-   in NEXT, then digest again for the following one, until the flow is finished or you are blocked), what you
+   in NEXT; `task.done` then names the following one, until the flow is finished or you are blocked), what you
    proposed that the user has not approved yet (`AWAITING REVIEW`: never start those), and the next tasks
    in plan order. Deal with the inbox first: `task.start` what you take now, `task.ack` what
    you have read and will act on later. `NO PLAN YET` → set up the plan (below) before anything else.
@@ -49,7 +49,14 @@ Two ways in, the same actions:
 3. **While working: `task.progress`** with a one-line note of what is now true and `check` for each criterion that
    is now met. Once per finished step, not per file edit.
 4. **End: `task.done`** with `summary`, `evidence` and the remaining criteria in `check`. Or `task.block`, or
-   `task.release` with a note of where it stands. Leave nothing in "doing" that nobody is doing.
+   `task.release` with a note of where it stands. Leave nothing in "doing" that nobody is doing. Each of these
+   prints `THEN`: the next task of your running flows and whether the user wrote something new.
+
+**Spend few tokens.** Read the digest once when a session or a turn starts, then trust `THEN`; read it again only
+when `THEN` shows inbox items or the user says they changed the plan. `task.start` prints the task's details: no
+`task.get` before it. Read rules.md once per session. Never poll the tracker, sleep, or schedule wake-ups, loops or
+cron jobs to wait for the user or another session: nothing reaches you while you wait. Ask (`task.ask`), go on with
+other work or end the turn; their answer is in the next digest.
 
 Which tasks are tracked, how to write a plan, how to add work found on the way and what a report must contain:
 [rules.md](references/rules.md). Read it before `plan.apply`, `task.add` and your first `task.done`.
@@ -72,7 +79,7 @@ runs it once they say so.
    leave its tasks alone.
 4. **Run, task by task.** Take the flow's `NEXT` task: branch, `task.start`, split an L task into sub-tasks
    (`task.add`, reason "Split of <id>") and delegate pieces to subagents, `task.progress` per finished step,
-   `task.done` with evidence, merge by the repository's rules, then digest again for the next one. A decision that
+   `task.done` with evidence, merge by the repository's rules, then take the next one its `THEN` names. A decision that
    is the user's: `task.ask` with your default and go on. A hard stop: `task.block`, then the next ready task.
 5. **Report.** When the flow is finished, or you stop (blocked everywhere, out of session): `flow.report` in
    Markdown, then the same in your closing message: what is now true, one line per task with its proof, what is

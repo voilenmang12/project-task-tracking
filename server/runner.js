@@ -97,8 +97,9 @@ export function runPrompt(run, workspace, cli = trackerCli()) {
     '- Report as you go (task.progress at each finished step) and close with task.done and its evidence. Commit, merge and',
     '  delete the branch as the repository\'s rules say.',
     run.target.kind === 'flow'
-      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task,\n  and digest again after each task.done, until the flow is finished, all that is left waits for others, or you are blocked.\n  Before you end, write the flow's overall report: flow_report with flowId ${run.target.id} and the Markdown text (the skill's rules.md, "Flow report").`
+      ? `- The flow is assigned to you: digest shows FLOW ${run.target.id} as yours. Take its NEXT tasks in order, one branch per task:\n  task.done prints THEN with the next one (read the digest again only when THEN says the inbox has new items), until\n  the flow is finished, all that is left waits for others, or you are blocked.\n  Before you end, write the flow's overall report: flow_report with flowId ${run.target.id} and the Markdown text (the skill's rules.md, "Flow report").`
       : '- Work on this task only. Work you find on the way goes into the tracker by the skill\'s rules, not into this run.',
+    '- Never sleep, poll the tracker, or schedule wake-ups or loops: nothing changes while you wait. Read each file once.',
     '- Nobody answers during the run. A decision that is the user\'s: task.ask with options and the default you continue with.',
     '  A hard stop (a missing asset, a failing tool, a command the permissions refuse, a sign-in): task.block saying what',
     '  would unblock it, then stop (or, in a flow, take the next ready task).',

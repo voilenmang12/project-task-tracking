@@ -16,8 +16,17 @@ tracker through the `nhanh` MCP tools (`digest`, `task_start`, …) or the CLI (
    flow's `NEXT` tasks in this session. If they press Run instead, a tracker run (`run-<n>`) does it: leave it alone.
 4. **Each task:** branch, `task.start`, split an L task into sub-tasks for subagents, `task.progress` per finished
    step, `task.done` with evidence, merge by the repository's rules. Decisions: `task.ask` with a default, go on.
-   Hard stops: `task.block`, next ready task.
+   Hard stops: `task.block`, next ready task. `task.done`, `task.block` and `task.release` print **THEN**: the
+   flow's next task and whether the user wrote something new, so the digest is read again only when THEN says so.
 5. **Report:** `flow.report` when the flow ends or stops, and the same in the closing message.
+
+## Few tokens, no waiting
+
+- One digest per session or turn; THEN after each closed task; `task.start` prints the task (no `task.get` first).
+- Write results echo only what is still open; flow results are one line.
+- Never poll the tracker, sleep, or schedule wake-ups, loops or cron jobs to wait for the user or another session.
+  Ask with `task.ask`, take other work, or end the turn: the answer is in the next digest.
+- The MCP server checks the tracker and its token once per session, not on every call.
 
 ## Work in progress, stops and resuming
 
